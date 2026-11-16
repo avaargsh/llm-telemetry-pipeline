@@ -47,3 +47,14 @@ kafka-ha-smoke:
 # Stops/restarts ClickHouse in isolated disposable Docker volumes.
 m3d-outage-smoke:
 	bash scripts/m3d-ch-outage-smoke.sh
+
+.PHONY: lag-exporter m3e-lag-smoke
+
+# Read-only Kafka group observer; requires an established committed group
+# and LogAppendTime topic (see docs/m3e-lag-monitor.md).
+lag-exporter:
+	go run ./cmd/lag-exporter
+
+# Disposable Kafka/ClickHouse environment, built-in failure injection.
+m3e-lag-smoke:
+	bash scripts/m3e-lag-throttle-smoke.sh

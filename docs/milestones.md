@@ -12,8 +12,9 @@
 | M3b-P1 | Three combined KRaft brokers, RF3/minISR2, leader loss, ISR refusal and quorum loss | **PASS/MERGED**: real RF3/ISR/quorum fault matrix, 35/35 ACKed events verified; all 9 CI gates green ([PR #12](https://github.com/avaargsh/llm-telemetry-pipeline/pull/12)) |
 | M3d | ClickHouse stopped with a batch in flight; safe offset resume, broker-timestamp retention risk | **PASS/MERGED**: real 24-event outage/replay CI and 10/10 regression suites ([PR #13](https://github.com/avaargsh/llm-telemetry-pipeline/pull/13)) |
 | M3c | Ledger/ClickHouse read-only reconciler, event-level discrepancy matrix and JSON evidence | **PASS/MERGED**: PostgreSQL+ClickHouse Docker matrix, CLI exit-code assertion and published CI Artifact |
+| M3e-P0 | Real Kafka lag sampler, effective retention, Prometheus alerts, slow CH gating and catch-up | **PR #17 in review**: initial real Kafka/ClickHouse evidence PASS; full CI and alert-rule tests pending |
 | M2d | Authorized DLQ redrive, retention/ACLs, audit | **NOT IMPLEMENTED** |
-| M4 | Prometheus/Grafana, P95/P99, lag age, recovery throughput/latency SLO | **NOT IMPLEMENTED** |
+| M4 | Further Grafana dashboards, end-to-end P95/P99, sustained throughput/saturation and production alert delivery SLO | **NOT IMPLEMENTED** |
 
 ## Ground rules
 
