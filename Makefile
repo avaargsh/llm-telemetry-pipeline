@@ -47,3 +47,13 @@ kafka-ha-smoke:
 # Stops/restarts ClickHouse in isolated disposable Docker volumes.
 m3d-outage-smoke:
 	bash scripts/m3d-ch-outage-smoke.sh
+
+.PHONY: monitor m4a-smoke
+
+# Read-only, single partition; requires newly bootstrapped LogAppendTime topic.
+monitor:
+	go run ./cmd/lag-monitor
+
+# Disposable real Kafka / ClickHouse HTTP-throttle measurement.
+m4a-smoke:
+	bash scripts/m4a-monitor-smoke.sh

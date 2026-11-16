@@ -93,9 +93,19 @@
 - TDD initial RED ([test-first source commit](https://github.com/avaargsh/llm-telemetry-pipeline/commit/ccddd8335178c6cb30da9b92d773eb0fc0d31e97)) and real E2E GREEN were recorded. A follow-up tightened the early-warning interval. **Final PR #13 head `44fdd02`: all 10 CI workflows PASS**, including [M3d outage/replay and retention-headroom](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43897760439) with JSON Artifact and [M1 1k/100k regression](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43897761211). Squash-merged as `0ef82c0`.
 - **Boundaries:** one Kafka partition, RF=1 dev Compose, ClickHouse process stop/start without disk loss; the direct-to-Kafka experiment does not verify transactional Ledger/Outbox for these 24 records. Retention-expiry estimates are not guarantees and no scheduled alert integration exists.
 
+## M4a Kafka lag monitor, throttled ClickHouse and alert transitions (2026-11-16)
+
+- [PR #15](https://github.com/avaargsh/llm-telemetry-pipeline/pull/15) adds a read-only Kafka collector using `OffsetFetch`, actual partition log start/end, topic-effective `retention.ms` and `LogAppendTime`. It rejects unknown consumer offsets, disabled/unknown effective retention and non-broker timestamp policy instead of reporting zero lag.
+- The independent `cmd/lag-monitor` serves Prometheus `/metrics`, structured `/status`, and `/healthz`; failed or stale Kafka polling emits unhealthy state even when a previous snapshot existed.
+- [First real Kafka/ClickHouse throttle CI](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43901243415): **PASS**. A test-only HTTP proxy delayed the second ClickHouse batch for 1.2 seconds. The real Kafka group commit remained at offset 8, log end 24 and offset lag 16. After releasing the proxy, the group committed offset 24, lag fell to zero and ClickHouse retained **24 trusted Event IDs with zero hash conflicts**.
+- That CI measured **162.31 events/sec** as the catch-up rate of its remaining 16-event micro workload; this is **not** a steady-state throughput benchmark or production SLO.
+- Prometheus rules for monitor-unavailable, early-warning, critical retention and committed-before-log-start are syntax-checked. A separate `promtool test rules` scenario covers firing and clearing with multiple monitor instances; final CI status is tracked on PR #15.
+- Dev topic bootstrap now sets `LogAppendTime` and finite 7-day `retention.ms` on newly created `usage.critical.v1` topics; pre-existing topics are **not silently modified**.
+- **Boundaries:** one partition per exporter, local single broker/CH fault lab, non-distributed sample reads, no actual Alertmanager notification delivery, no multi-AZ durability or performance SLO claim.
+
 ## Still unverified
 
-- Measured and reproducible throughput, P95/P99 end-to-end query latency, saturation limits, and a deployed lag-age/retention risk alerting pipeline; the 100,000 event count is verified but performance measures are not.
+- Sustained benchmark throughput, P95/P99 query latency, saturation limits, full multi-partition lag monitoring, and an operational Prometheus+Alertmanager deployment/notification delivery test. The M4a micro workload catch-up measurement and 100,000 event count do not establish performance SLOs.
 - Consumer rebalance fencing beyond tested 2-worker conditions; durable DLQ redrive and retention governance; and broker/partition/rack fault combinations beyond the tested one-partition RF3 HA lab.
 - Production Kafka topology with dedicated controllers, cross-zone placement, authenticated listeners, real persistent storage and operational recovery. Developer Compose remains one Broker with RF=1.
 - Full end-to-end at-least-once correctness under all documented failure injections.

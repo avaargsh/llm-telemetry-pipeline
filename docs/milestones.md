@@ -13,7 +13,8 @@
 | M3d | ClickHouse stopped with a batch in flight; safe offset resume, broker-timestamp retention risk | **PASS/MERGED**: real 24-event outage/replay CI and 10/10 regression suites ([PR #13](https://github.com/avaargsh/llm-telemetry-pipeline/pull/13)) |
 | M3c | Ledger/ClickHouse read-only reconciler, event-level discrepancy matrix and JSON evidence | **PASS/MERGED**: PostgreSQL+ClickHouse Docker matrix, CLI exit-code assertion and published CI Artifact |
 | M2d | Authorized DLQ redrive, retention/ACLs, audit | **NOT IMPLEMENTED** |
-| M4 | Prometheus/Grafana, P95/P99, lag age, recovery throughput/latency SLO | **NOT IMPLEMENTED** |
+| M4a | Live Kafka committed/log offsets, topic-effective retention, Prometheus/JSON, alert rules, throttled CH recovery measurement | **PR #15**: real 24-event Kafka/CH test PASS; Prometheus alert firing/resolution tests under final CI review |
+| M4 remaining | Multi-partition collector, deployed Prometheus/Grafana/Alertmanager, P95/P99 and sustained recovery SLO | **NOT IMPLEMENTED / NOT VERIFIED** |
 
 ## Ground rules
 
