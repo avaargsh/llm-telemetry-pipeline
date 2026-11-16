@@ -8,7 +8,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/example/llm-telemetry-pipeline/internal/event"
+	"github.com/avaargsh/llm-telemetry-pipeline/internal/event"
 )
 
 func main() {
