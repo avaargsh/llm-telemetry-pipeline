@@ -1,0 +1,35 @@
+name: m3e-kafka-lag-and-throttle
+on:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  live-kafka:
+    runs-on: ubuntu-latest
+    timeout-minutes: 16
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go mod download
+      - run: go mod verify
+      - name: Validate Prometheus alert syntax and firing/resolution cases
+        run: |
+          docker run --rm -v "$PWD/deployments/prometheus:/rules:ro" --entrypoint /bin/promtool prom/prometheus:v3.5.0 check rules /rules/alert-rules.yml
+          docker run --rm -v "$PWD/deployments/prometheus:/rules:ro" --entrypoint /bin/promtool prom/prometheus:v3.5.0 test rules /rules/alert-rules.test.yml
+      - name: Real Kafka group-offset sampler and gated ClickHouse backpressure
+        env:
+          M3E_LAG_REPORT_PATH: /tmp/m3e-lag-report.json
+          M3E_THROTTLE_REPORT_PATH: /tmp/m3e-throttle-report.json
+        run: bash scripts/m3e-lag-throttle-smoke.sh
+      - name: Publish independent machine-readable evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m3e-live-kafka-lag-evidence
+          path: |
+            /tmp/m3e-lag-report.json
+            /tmp/m3e-throttle-report.json
+          if-no-files-found: ignore
+          retention-days: 14

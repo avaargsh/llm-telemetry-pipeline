@@ -52,8 +52,9 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 - **M3b-P0 merged:** the production ingest-worker now consumes per Kafka coordinator Generation; revoked assignments cannot commit offsets, and real 2-worker/2-partition replay was verified in Kafka/ClickHouse CI ([PR #11](https://github.com/avaargsh/llm-telemetry-pipeline/pull/11)).
 - **M3b-P1 merged:** isolated 3-broker KRaft RF=3/minISR=2; real leader failover, ISR rejection, combined-controller quorum loss and recovery of 35 Kafka-ACKed sealed Event IDs (PR #12).
 - **M3d merged:** real ClickHouse stop during a Kafka batch; 24 ACKed events, safe committed prefix 8, recovery replays the remaining 16; broker-derived retention headroom and risk classification ([PR #13](https://github.com/avaargsh/llm-telemetry-pipeline/pull/13), all 10 CI gates PASS).
+- **M3e in review:** read-only Kafka lag/retention exporter with Prometheus/JSON endpoints, real broker Group OffsetFetch and effective Topic DescribeConfigs, fail-closed stale metrics, alert rules and ClickHouse throttling/catch-up CI ([PR #17](https://github.com/avaargsh/llm-telemetry-pipeline/pull/17)).
 - **M3c merged:** read-only bounded PostgreSQL↔ClickHouse reconciliation, report statuses for replay, pending, grace, missing, orphan, hash conflict, mismatched tokens, and orphaned Outbox; machine-readable JSON with nonzero failure/incomplete exit codes.
-- Explicitly incomplete: automated Lag/retention alert delivery (current risk assessment is a library and CI evidence, not a deployed monitor), DLQ redrive/retention governance, resilience beyond tested rebalance and single-partition broker-failure envelopes, independent production Kafka controllers, scheduled reconciliation/alerting, P95/P99 performance SLO, production authentication/secret management.
+- Explicitly incomplete: external Alertmanager delivery/on-call wiring (Prometheus rules and exporter are available but not deployed to production), DLQ redrive/retention governance, resilience beyond tested rebalance and single-partition broker-failure envelopes, independent production Kafka controllers, scheduled reconciliation/alerting, P95/P99 performance SLO, production authentication/secret management.
 
 ## Docs
 
@@ -66,6 +67,7 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 - [M3b-P1 three-broker RF3/minISR2 fault matrix](docs/m3b-ha.md)
 - [M3c Ledger/ClickHouse reconciliation](docs/m3c-reconciliation.md)
 - [M3d ClickHouse downtime and retention headroom](docs/m3d-outage.md)
+- [M3e live Kafka Lag exporter, Prometheus alerts and slow ClickHouse recovery](docs/m3e-lag-monitor.md)
 - [Reliability contract](docs/reliability-contract.md)
 - [Verification evidence](docs/verification-record.md)
 - [Fault matrix](docs/fault-matrix.md)

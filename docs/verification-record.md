@@ -93,9 +93,18 @@
 - TDD initial RED ([test-first source commit](https://github.com/avaargsh/llm-telemetry-pipeline/commit/ccddd8335178c6cb30da9b92d773eb0fc0d31e97)) and real E2E GREEN were recorded. A follow-up tightened the early-warning interval. **Final PR #13 head `44fdd02`: all 10 CI workflows PASS**, including [M3d outage/replay and retention-headroom](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43897760439) with JSON Artifact and [M1 1k/100k regression](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43897761211). Squash-merged as `0ef82c0`.
 - **Boundaries:** one Kafka partition, RF=1 dev Compose, ClickHouse process stop/start without disk loss; the direct-to-Kafka experiment does not verify transactional Ledger/Outbox for these 24 records. Retention-expiry estimates are not guarantees and no scheduled alert integration exists.
 
+## M3e read-only Kafka group lag and ClickHouse slow-write recovery (2026-11-17)
+
+- [Draft PR #17](https://github.com/avaargsh/llm-telemetry-pipeline/pull/17) adds Kafka `OffsetFetch`, group coordinator discovery and topic-effective `DescribeConfigs`, broker log start/end and oldest pending `LogAppendTime` fetch without joining/perturbing the monitored group. Invalid group commits, timestamp policies or retention fail closed.
+- `cmd/lag-exporter` serves `/metrics` and `/status`; any sample failure invalidates prior partition gauges and sets `llm_telemetry_lag_scrape_success=0`. Scrape/alert cardinality is bounded to one configured Topic and <=32 partitions.
+- [First real Kafka + ClickHouse throttle run](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43906791190): **PASS**. Broker group OffsetFetch reported 8 committed / log end 20 (lag 12) for a 60-second effective retention Topic; warning and critical (under separate explicit margin policies) were emitted and then resolved on committed offset 20.
+- The test-only HTTP gate blocked the second real ClickHouse batch before its ACK. Kafka broker still reported committed offset 8 and **lag distance 24**. After release, the group committed through offset 32; ClickHouse raw/trusted were **32/32**, integrity conflicts zero. The 24-event catch-up took **0.209 seconds (approximately 115 events/s)** on this one CI run, **not** a sustained benchmark or production SLO. Machine-readable `m3e-live-kafka-lag-evidence` artifact attached.
+- Prometheus alert rules cover collector unavailable, retention warning, critical/expiry-risk and committed-before-log-start gap; `promtool` verification and final full regression are tracked on PR #17. Alertmanager routing and production deployment are not completed.
+- **Limits:** a lag offset distance is not guaranteed to equal the number of available messages, retention is a segment-level policy, and the CI experiment uses one local Kafka partition and a test-only HTTP gate. PostgreSQL ledger remains the only financial authority.
+
 ## Still unverified
 
-- Measured and reproducible throughput, P95/P99 end-to-end query latency, saturation limits, and a deployed lag-age/retention risk alerting pipeline; the 100,000 event count is verified but performance measures are not.
+- Sustained workload throughput, P95/P99 end-to-end query latency, saturation limits and fully deployed Grafana/Alertmanager routing. The 100,000-event count and M3e micro-recovery throughput are not production performance SLOs.
 - Consumer rebalance fencing beyond tested 2-worker conditions; durable DLQ redrive and retention governance; and broker/partition/rack fault combinations beyond the tested one-partition RF3 HA lab.
 - Production Kafka topology with dedicated controllers, cross-zone placement, authenticated listeners, real persistent storage and operational recovery. Developer Compose remains one Broker with RF=1.
 - Full end-to-end at-least-once correctness under all documented failure injections.

@@ -1,0 +1,32 @@
+groups:
+  - name: llm-telemetry-kafka-lag
+    interval: 30s
+    rules:
+      - alert: KafkaLagCollectorUnavailable
+        expr: llm_telemetry_lag_scrape_success == 0 or absent(llm_telemetry_lag_scrape_success)
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kafka lag collector unavailable or reporting unknown evidence"
+      - alert: KafkaRetentionWarning
+        expr: llm_telemetry_kafka_retention_risk{status="warning"} == 1
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Kafka estimated retention headroom entered early-warning window"
+      - alert: KafkaRetentionCritical
+        expr: llm_telemetry_kafka_retention_risk{status=~"critical|expiry_risk"} == 1
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kafka oldest unconsumed record is approaching or beyond estimated retention"
+      - alert: KafkaCommittedBeforeLogStart
+        expr: llm_telemetry_kafka_data_gap_offsets > 0
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kafka group committed offset is before broker log start; data gap possible"

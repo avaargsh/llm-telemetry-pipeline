@@ -1,0 +1,65 @@
+rule_files:
+  - alert-rules.yml
+evaluation_interval: 30s
+tests:
+  - interval: 30s
+    input_series:
+      - series: 'llm_telemetry_lag_scrape_success'
+        values: '1 1 1 1 1'
+      - series: 'llm_telemetry_kafka_retention_risk{group="g",topic="t",partition="0",status="warning"}'
+        values: '0 1 1 0 0'
+      - series: 'llm_telemetry_kafka_retention_risk{group="g",topic="t",partition="0",status="critical"}'
+        values: '0 0 0 1 0'
+      - series: 'llm_telemetry_kafka_data_gap_offsets{group="g",topic="t",partition="0"}'
+        values: '0 0 0 0 4'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: KafkaRetentionWarning
+        exp_alerts:
+          - exp_labels:
+              group: g
+              topic: t
+              partition: "0"
+              status: warning
+              severity: warning
+            exp_annotations:
+              summary: "Kafka estimated retention headroom entered early-warning window"
+      - eval_time: 2m
+        alertname: KafkaRetentionWarning
+        exp_alerts: []
+      - eval_time: 1m30s
+        alertname: KafkaRetentionCritical
+        exp_alerts:
+          - exp_labels:
+              group: g
+              topic: t
+              partition: "0"
+              status: critical
+              severity: critical
+            exp_annotations:
+              summary: "Kafka oldest unconsumed record is approaching or beyond estimated retention"
+      - eval_time: 2m
+        alertname: KafkaCommittedBeforeLogStart
+        exp_alerts:
+          - exp_labels:
+              group: g
+              topic: t
+              partition: "0"
+              severity: critical
+            exp_annotations:
+              summary: "Kafka group committed offset is before broker log start; data gap possible"
+  - interval: 30s
+    input_series:
+      - series: 'llm_telemetry_lag_scrape_success'
+        values: '1 0 0 1 1'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: KafkaLagCollectorUnavailable
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "Kafka lag collector unavailable or reporting unknown evidence"
+      - eval_time: 2m
+        alertname: KafkaLagCollectorUnavailable
+        exp_alerts: []
