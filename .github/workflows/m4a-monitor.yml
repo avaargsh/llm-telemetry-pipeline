@@ -1,0 +1,34 @@
+name: m4a-kafka-lag-monitor
+on:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go mod download
+      - run: go mod verify
+      - name: Validate Prometheus alert rules syntax
+        run: |
+          docker run --rm --entrypoint=/bin/promtool \
+            -v "$PWD/deployments/observability:/rules:ro" \
+            prom/prometheus:v3.4.0 \
+            check rules /rules/retention-alerts.yml
+      - name: Real Kafka offsets and throttled ClickHouse recovery
+        env:
+          M4A_REPORT_PATH: /tmp/m4a-monitor-report.json
+        run: bash scripts/m4a-monitor-smoke.sh
+      - name: Upload machine-readable lag and recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m4a-kafka-lag-monitor-report
+          path: /tmp/m4a-monitor-report.json
+          if-no-files-found: ignore
+          retention-days: 14
