@@ -41,3 +41,9 @@ m2-smoke:
 # Dedicated three-broker fault lab; stops/removes its isolated volumes on exit.
 kafka-ha-smoke:
 	bash scripts/m3b-ha-smoke.sh
+
+.PHONY: m3d-outage-smoke
+
+# Stops/restarts ClickHouse in isolated disposable Docker volumes.
+m3d-outage-smoke:
+	bash scripts/m3d-ch-outage-smoke.sh

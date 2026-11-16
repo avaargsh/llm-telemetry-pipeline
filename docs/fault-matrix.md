@@ -1,13 +1,17 @@
-# Fault Matrix (planned, not yet executed)
+# Fault Matrix — verified scopes and remaining gaps
 
-| ID | Fault | Non-negotiable assertion |
-|---|---|---|
-| F01 | ClickHouse stopped | No progress commit for unpersisted records |
-| F02 | SIGKILL after successful ClickHouse insert, before offset commit | Replayed records become visible, ledger does not charge twice |
-| F03 | Broker down in RF3 cluster | Quorum-aware availability, inspect ISR and recovery |
-| F04 | CH ACK dropped after successful insert | Duplicates expected in raw table; de-duplicated reconciliation succeeds |
-| F05 | ClickHouse write throughput throttled | Backpressure, lag and oldest-message age alarms |
-| F06 | Schema invalid | Only commit after durable DLQ ACK; otherwise block/retry |
-| F07 | Retention window closing | Recover-before-expiry alert, no absolute zero-loss claim |
-| F08 | Rebalance while writes in flight | Old owner is fenced; committed progress remains safe |
-| F09 | Outbox relay crashes after Kafka ACK but before DB update | Duplicate delivery but same event_id and payload_hash |
+The table distinguishes real Docker-backed fault experiments from simulations and unverified cases; none imply absolute zero-loss.
+
+| ID | Fault | Required evidence | Current status |
+|---|---|---|---|
+| F01 | ClickHouse stopped during Kafka batch processing | No commit after failed CH write; source group resumes from first uncommitted offset | **PASS / PR #13**: real stop on batch 2, committed offset 8, replayed offsets 8–23, trusted 24/24 |
+| F02 | Crash between successful CH insert and offset commit | Replay accepted; no double count | **PARTIAL**: M3a injected a post-CH-ACK commit failure with real Kafka, but not a physical SIGKILL |
+| F03 | Kafka Leader/ISR/broker fault | RF3/minISR2 failure envelope, ACKed event recovery | **PASS / PR #12**: real 3-broker experiment, 35/35 ACKed Event IDs |
+| F04 | CH ACK dropped after successful insert | Duplicate raw rows, one logical record | **PASS / PR #7**: real CH plus test ACK-dropping proxy |
+| F05 | CH write throughput throttled | Backpressure, lag/oldest age and catch-up throughput | **NOT VERIFIED**: latency injection and recovery rate still needed |
+| F06 | Invalid schema / poison event | Durable DLQ ACK before source commit | **PASS / PR #5** |
+| F07 | Kafka retention expiration risk | Broker log start/end, unconsumed broker timestamp, bounded expiry estimate and actionable alert | **PARTIAL / PR #13**: broker-derived headroom + unit-tested severity; scheduled alert delivery not built |
+| F08 | Group rebalance with in-flight CH write | Revoked owner cannot commit; new owner replays | **PASS / PR #11** |
+| F09 | Outbox relay crash after Kafka ACK before DB mark | Same ID/hash, duplicate tolerated, no new ledger charge | **NOT VERIFIED as real fault experiment**; transactional/idempotent path is separately tested in PR #4 |
+
+Billing always uses PostgreSQL `usage_ledger`. The ClickHouse raw table and Kafka delivery are at-least-once. Real tests use isolated development infrastructure, not production incident evidence.

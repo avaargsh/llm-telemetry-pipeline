@@ -1,0 +1,28 @@
+name: m3d-clickhouse-outage-recovery
+on:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  outage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go mod download
+      - run: go mod verify
+      - name: Real ClickHouse stop during Kafka batch and deterministic replay
+        env:
+          M3D_REPORT_PATH: /tmp/m3d-outage-report.json
+        run: bash scripts/m3d-ch-outage-smoke.sh
+      - name: Publish recovery and Kafka retention-headroom evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m3d-clickhouse-recovery-report
+          path: /tmp/m3d-outage-report.json
+          if-no-files-found: ignore
+          retention-days: 14
