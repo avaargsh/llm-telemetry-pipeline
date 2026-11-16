@@ -184,6 +184,8 @@ func TestThreeBrokerLeaderFailoverAndISRFailClosed(t *testing.T){
  haPublish(t,ctx,seed,300,4,ack)
  observed:=haReadAcknowledged(t,ctx,ack)
  if observed<len(ack){t.Fatalf("observed %d records for %d acknowledged",observed,len(ack))}
+ quorumFailure:=haProbeQuorumLossAndRestore(t,ctx,seed,restored.Leader.ID,ack)
+ t.Logf("quorum loss produced no new Kafka ACK: %s",quorumFailure)
 
  report:=map[string]any{
     "schema_version":1,
@@ -198,6 +200,9 @@ func TestThreeBrokerLeaderFailoverAndISRFailClosed(t *testing.T){
     "broker_acknowledged_ids":len(ack),
     "readback_records":observed,
     "all_acknowledged_verified":true,
+    "quorum_loss_tested":true,
+    "quorum_loss_producer_error":quorumFailure,
+    "acknowledged_ids_verified_after_quorum_restore":true,
     "notes":"Confirmed ACKed records only; failed/unknown ACK may still create a physical record. No cross-AZ, disk-loss, controller quorum-loss, or exactly-once claim.",
  }
  if path:=os.Getenv("M3B_HA_REPORT_PATH");path!=""{
