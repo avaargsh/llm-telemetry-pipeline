@@ -22,11 +22,19 @@
 - For 100,000: Kafka ACK **100,000**; ClickHouse raw rows **100,000**; `uniqExact(event_id)` **100,000**.
 - Test uses fresh Docker volumes in separate matrix jobs with fixed seeds and a single Kafka broker. It validates nominal ingestion counts, **not** latency SLOs, durability under crashes, or billing idempotency.
 
+## M2 transactional ledger and Outbox acceptance (2026-11-16)
+
+- **Real PostgreSQL integration: PASS** ([M2 workflow](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43872591353)).
+- Verified: duplicate event ID and identical hash produces one ledger/outbox entry; conflicting event hash or alternate ID for the same request is rejected; 12 simultaneous retries still produce one ledger and one outbox event.
+- Verified: an injected Outbox INSERT failure causes the ledger INSERT to roll back — neither table contains the attempted event.
+- Verified: `FOR UPDATE SKIP LOCKED` lease and attempt fencing rejects stale/incorrect worker acknowledgments, with durable retry scheduling.
+- **Kafka-down end-to-end scenario: PASS** in a fresh Docker environment. With Kafka stopped, PostgreSQL stored **100 ledger events** and **100 pending Outbox events**. After Kafka restart, Relay published **100** and ClickHouse reported **100 distinct Event IDs**. Repeating the same immutable 100 inputs resulted in **0 new ledger entries / 100 duplicates**, with ledger and Outbox counts unchanged.
+- Go vet, race tests, build and module checksum verification also run in CI. These tests establish a scoped transactional and replay contract, **not** absolute no-loss or exactly-once delivery.
+
 ## Still unverified
 
 - Measured and reproducible throughput, P95/P99 end-to-end query latency, and saturation limits; the 100,000 event count is verified but those performance measures are not.
 - Crash after ClickHouse ACK/before Kafka commit, lost ClickHouse ACK, rebalance fencing, durable DLQ, and source Kafka broker faults.
-- PostgreSQL transactional ledger + Outbox lifecycle and authoritative billing deduplication.
 - Production Kafka 3-broker/replication-failure behavior; developer Compose has only one broker and RF=1.
 - Full end-to-end at-least-once correctness under all documented failure injections.
 

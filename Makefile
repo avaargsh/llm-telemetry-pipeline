@@ -24,3 +24,14 @@ publish:
 
 consume:
 	go run ./cmd/ingest-worker
+
+.PHONY: ledger-ingest relay m2-smoke
+
+ledger-ingest:
+	go run ./cmd/event-generator --count 100 --seed local-m2 --start 2026-11-16T11:00:00Z | go run ./cmd/usage-ledger-ingest
+
+relay:
+	go run ./cmd/outbox-relay
+
+m2-smoke:
+	bash scripts/m2-smoke.sh

@@ -10,7 +10,7 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      # TODO: Commit go.sum after the first CI fetch; authoring environment has no DNS.
+          cache: false
       - run: go mod download
       - run: go mod verify
       - run: go vet ./...
