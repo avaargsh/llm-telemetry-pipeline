@@ -8,6 +8,7 @@ import (
     "errors"
     "fmt"
     "log"
+    "net"
     "time"
 
     "github.com/segmentio/kafka-go"
@@ -50,6 +51,20 @@ func(c GenerationCommitter)Commit(ctx context.Context,msgs []Message)error{
     return nil
 }
 
+// retryableGroupError only retries short-lived coordinator/bootstrap conditions.
+// Kafka authorization and configuration errors are always surfaced immediately.
+func retryableGroupError(err error) bool {
+    var kafkaError kafka.Error
+    if errors.As(err,&kafkaError) {
+        return kafkaError.Temporary() ||
+            kafkaError==kafka.RebalanceInProgress ||
+            kafkaError==kafka.IllegalGeneration ||
+            kafkaError==kafka.UnknownMemberId
+    }
+    var netError net.Error
+    return errors.As(err,&netError) && (netError.Timeout()||netError.Temporary())
+}
+
 type GroupWorker struct{
     Brokers []string
     Topic string
@@ -85,6 +100,14 @@ func(w GroupWorker)Run(ctx context.Context)error{
             select{case e:=<-fatal:return e;default:}
             if ctx.Err()!=nil{return ctx.Err()}
             if runCtx.Err()!=nil{return runCtx.Err()}
+            if retryableGroupError(err){
+                log.Printf("temporary group coordinator error, retrying: %v",err)
+                select{
+                case <-runCtx.Done():return runCtx.Err()
+                case <-time.After(350*time.Millisecond):
+                }
+                continue
+            }
             return fmt.Errorf("consumer group next generation: %w",err)
         }
         for topic,assignments:=range gen.Assignments{
