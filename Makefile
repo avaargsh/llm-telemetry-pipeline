@@ -35,3 +35,9 @@ relay:
 
 m2-smoke:
 	bash scripts/m2-smoke.sh
+
+.PHONY: kafka-ha-smoke
+
+# Dedicated three-broker fault lab; stops/removes its isolated volumes on exit.
+kafka-ha-smoke:
+	bash scripts/m3b-ha-smoke.sh
