@@ -1,6 +1,6 @@
 # M4-P0 — real Kafka → Prometheus → Alertmanager delivery
 
-**Status:** PR #21 under review. This is a disposable local/CI profile, not production on-call wiring.
+**Status:** merged via [PR #21](https://github.com/avaargsh/llm-telemetry-pipeline/pull/21) as `574a937` after 13/13 combined CI workflows passed. Disposable local/CI profile, not production on-call wiring.
 
 ## Architecture and purpose
 
@@ -49,3 +49,9 @@ The local overlay publishes Prometheus only on `127.0.0.1:19090`, Alertmanager o
 - Prometheus `KafkaCommittedBeforeLogStart` and collector rules remain tested via `promtool`. The real end-to-end E2E intentionally covers the Warning/Critical transition and CollectorUnavailable recovery; it does not deliberately delete broker segments.
 - Neither a sustained throughput/latency benchmark nor a production SLO has been established. 100,000-event correctness and 24-event catch-up micro tests are separate scopes.
 - The Compose is **not** a production HA configuration: one Kafka broker, plaintext local network, Docker single host. The separate RF3 fault matrix remains in M3b-P1.
+
+## Final verified evidence
+
+[Live Kafka alert delivery GitHub Actions run 43912506378](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43912506378) passed on the final merge-tested head `63f1263` and uploaded the `m4-live-alertmanager-delivery` JSON artifact. It verified three distinct real Kafka-triggered alerts (RetentionWarning, RetentionCritical and CollectorUnavailable), each with actual webhook **firing and resolved** deliveries in that order. The complementary [synthetic-metrics M4a test (PR #22)](https://github.com/avaargsh/llm-telemetry-pipeline/pull/22) separately verified data-gap alert delivery.
+
+All 13 PR-head workflows passed, including Go race/vet/build, M1 1k/100k events, M2a/M2b/M2c and M3a/M3b-P0/M3b-P1/M3c/M3d/M3e. **No sustained performance SLO or external on-call delivery** is claimed.

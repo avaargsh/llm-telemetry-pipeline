@@ -117,3 +117,10 @@
 - Full end-to-end at-least-once correctness under all documented failure injections.
 
 **Interpretation:** M1 demonstrates 1k and 100k event Docker-backed ingestion tests. It does not demonstrate end-to-end exactly-once delivery, zero loss, or financial accounting correctness.
+
+## M4a+ live Kafka→Prometheus→Alertmanager integration evidence (2026-11-17)
+
+- [PR #21](https://github.com/avaargsh/llm-telemetry-pipeline/pull/21) added a non-root, internal-only Kafka Lag Exporter Docker image, isolated Prometheus+Alertmanager overlay and disposable test-only webhook receiver. It preserves the earlier [PR #22](https://github.com/avaargsh/llm-telemetry-pipeline/pull/22) synthetic-metric delivery evidence.
+- [Final live Kafka test run 43912506378](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43912506378): **PASS**. Real Kafka produced 20 messages and group-committed 8 with LogAppendTime and finite retention; Warning and Critical retention alerts were delivered `firing` then `resolved` to the actual Alertmanager webhook. Stopping/restarting Kafka yielded CollectorUnavailable `firing` and `resolved` notifications. GitHub Actions artifact `m4-live-alertmanager-delivery` contains the notification records.
+- Final branch head `63f1263` preserved both the real-Kafka and synthetic-metric test suites, passed **13/13 CI workflows**, including M1 100k and all M2/M3 regression experiments, and squash-merged as `574a937`.
+- **Boundaries:** no production paging/notification delivery, secured multi-cluster observability, sustained P95/P99 measurements, or exactly-once/zero-loss guarantee. The local receiver is disposable and unauthenticated; ports are bound to localhost only.
