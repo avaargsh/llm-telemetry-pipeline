@@ -1,0 +1,21 @@
+name: m3a-kafka-replay-faults
+on:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  replay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go mod download
+      - run: go mod verify
+      - name: Real Kafka+ClickHouse crash-window tests
+        env:
+          TEST_KAFKA_BROKER: localhost:29092
+          TEST_CLICKHOUSE_HTTP: http://localhost:18123
+        run: bash scripts/m3a-replay-smoke.sh
