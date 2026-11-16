@@ -5,6 +5,7 @@ package main
 
 import (
     "context"
+    "encoding/json"
     "errors"
     "flag"
     "log"
@@ -26,13 +27,20 @@ func (c groupCommitter) Commit(ctx context.Context,messages []ingest.Message)err
     return c.reader.CommitMessages(ctx,msgs...)
 }
 
-func run(ctx context.Context,reader *kafka.Reader,sink *clickhouse.HTTPWriter,batchSize int,fetchWait time.Duration)error{
+// KafkaDLQ sends a stable identity and raw message to a dedicated topic.
+// A failed or ambiguous ACK is NOT permission to skip the source record.
+type KafkaDLQ struct{writer *kafka.Writer}
+func(p KafkaDLQ)Publish(ctx context.Context,d ingest.DeadLetter)error{
+    encoded,err:=json.Marshal(d);if err!=nil{return err}
+    return p.writer.WriteMessages(ctx,kafka.Message{Key:[]byte(d.StableKey()),Value:encoded})
+}
+func run(ctx context.Context,reader *kafka.Reader,sink *clickhouse.HTTPWriter,dlq ingest.DeadLetterPublisher,batchSize int,fetchWait time.Duration)error{
     batch:=make([]ingest.Message,0,batchSize)
     flush:=func()error{
         if len(batch)==0{return nil}
         // An insert may have succeeded even if this call returns an error.
         // Do not commit and do not try to skip a poison message in M1.
-        if err:=ingest.ProcessBatch(ctx,batch,sink,groupCommitter{reader});err!=nil{return err}
+        if err:=ingest.ProcessBatchWithDLQ(ctx,batch,sink,groupCommitter{reader},dlq);err!=nil{return err}
         log.Printf("confirmed and committed batch=%d",len(batch))
         batch=batch[:0]
         return nil
@@ -55,6 +63,7 @@ func main(){
     brokers:=flag.String("brokers","localhost:29092","comma-separated bootstrap brokers")
     topic:=flag.String("topic","usage.critical.v1","Kafka topic")
     group:=flag.String("group","telemetry-clickhouse-v1","consumer group ID")
+    dlqTopic:=flag.String("dlq-topic","events.dlq.v1","durable poison-message topic")
     batchSize:=flag.Int("batch-size",250,"maximum events per ClickHouse insert")
     fetchWait:=flag.Duration("fetch-wait",1*time.Second,"flush partial batch if no message arrives")
     endpoint:=flag.String("clickhouse","http://localhost:18123","ClickHouse HTTP endpoint")
@@ -69,6 +78,10 @@ func main(){
         StartOffset:kafka.FirstOffset,CommitInterval:0,MinBytes:1,MaxBytes:10e6,MaxWait:250*time.Millisecond,
     })
     defer func(){if err:=reader.Close();err!=nil{log.Printf("reader close: %v",err)}}()
+    if *dlqTopic=="" {log.Fatal("dlq-topic is required")}
+    dlqWriter:=&kafka.Writer{Addr:kafka.TCP(strings.Split(*brokers,",")...),Topic:*dlqTopic,Balancer:&kafka.Hash{},
+        RequiredAcks:kafka.RequireAll,Async:false,AllowAutoTopicCreation:false,BatchTimeout:100*time.Millisecond}
+    defer dlqWriter.Close()
     sink:=&clickhouse.HTTPWriter{Endpoint:*endpoint,Database:*db,User:*user,Password:*password}
-    if err:=run(ctx,reader,sink,*batchSize,*fetchWait);err!=nil && !errors.Is(err,context.Canceled){log.Printf("stopped without committing incomplete batch: %v",err);os.Exit(1)}
+    if err:=run(ctx,reader,sink,KafkaDLQ{dlqWriter},*batchSize,*fetchWait);err!=nil && !errors.Is(err,context.Canceled){log.Printf("stopped without committing incomplete batch: %v",err);os.Exit(1)}
 }
