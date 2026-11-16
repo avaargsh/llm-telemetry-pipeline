@@ -1,0 +1,33 @@
+groups:
+  - name: llm-telemetry-kafka-retention
+    rules:
+      - alert: LLMUsageKafkaLagMonitorUnavailable
+        expr: (telemetry_kafka_lag_monitor_up == 0) or absent(telemetry_kafka_lag_monitor_up)
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Kafka telemetry lag data is unavailable or stale
+          description: The collector cannot verify Kafka offsets, timestamps or effective retention. Do not interpret absent observations as zero lag.
+      - alert: LLMUsageKafkaRetentionEarlyWarning
+        expr: (telemetry_kafka_retention_warning == 1) and on() (telemetry_kafka_lag_monitor_up == 1)
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: Kafka oldest pending record is approaching estimated retention window
+      - alert: LLMUsageKafkaRetentionCritical
+        expr: (telemetry_kafka_retention_critical == 1) and on() (telemetry_kafka_lag_monitor_up == 1)
+        for: 15s
+        labels:
+          severity: critical
+        annotations:
+          summary: Kafka oldest pending record is at retention safety margin or beyond
+      - alert: LLMUsageKafkaCommittedBeforeLogStart
+        expr: (telemetry_kafka_retention_data_gap == 1) and on() (telemetry_kafka_lag_monitor_up == 1)
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: Consumer committed offset is already below Kafka log-start offset
+          description: This can indicate unrecoverable loss of unconsumed records. Requires manual investigation.
