@@ -1,0 +1,30 @@
+name: m4-live-alertmanager-delivery
+on:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  live-alerts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Validate all real alert rules
+        run: |
+          docker run --rm -v "$PWD/deployments/prometheus:/rules:ro" --entrypoint /bin/promtool prom/prometheus:v3.5.0 check rules /rules/alert-rules.yml
+          docker run --rm -v "$PWD/deployments/prometheus:/rules:ro" --entrypoint /bin/promtool prom/prometheus:v3.5.0 test rules /rules/alert-rules.test.yml
+      - name: Real Kafka → exporter → Prometheus → Alertmanager → webhook firing and resolution
+        env:
+          M4_ALERT_REPORT_PATH: /tmp/m4-alert-delivery-report.json
+        run: bash scripts/m4-alert-delivery-smoke.sh
+      - name: Publish machine-checkable delivery report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m4-live-alertmanager-delivery
+          path: /tmp/m4-alert-delivery-report.json
+          if-no-files-found: ignore
+          retention-days: 14
