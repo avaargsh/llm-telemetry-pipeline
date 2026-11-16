@@ -84,9 +84,18 @@
 - **Scope:** this proves RF3/minISR2 behavior under the stated single-partition, local-volume, combined-mode faults. It does not establish independent multi-AZ controllers, rack-awareness, durable storage surviving disk loss, exactly-once delivery or global zero loss.
 - An operation that returned a timeout/non-ACK can still be present in Kafka after a failure; it must not be counted as broker-ACKed or silently assumed absent.
 
+## M3d ClickHouse mid-batch outage, replay and retention headroom (2026-11-16)
+
+- [PR #13](https://github.com/avaargsh/llm-telemetry-pipeline/pull/13) adds a real Kafka group and ClickHouse Docker fault experiment. 24 sealed broker-ACKed events were produced in 8-event batches.
+- [First real M3d run](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43896683695) **PASS**: the first batch persisted and Kafka committed offset 8 (last event offset 7). The real ClickHouse container was then stopped during the second batch's `Insert`; the worker failed closed without advancing offsets. After restarting ClickHouse, the same group reprocessed offsets 8–23; final raw/trusted events **24/24**, integrity conflicts **0**.
+- The test independently queries the Kafka broker log start/end and fetches the *first unconsumed record's Kafka LogAppendTime* for a scoped 10-minute retention setting. It evaluates offset distance and estimated expiry headroom, **not** event payload timestamps. The `m3d-clickhouse-recovery-report` JSON Actions Artifact preserves measured values.
+- New `internal/lagrisk` distinguishes healthy/early warning/critical/estimated expiry and committed offsets that have fallen before the Kafka log start. Unknown offsets or a missing timestamp fail closed, never report healthy.
+- TDD initial RED ([test-first source commit](https://github.com/avaargsh/llm-telemetry-pipeline/commit/ccddd8335178c6cb30da9b92d773eb0fc0d31e97)) and real E2E GREEN are available. A follow-up tightened the early-warning interval; final PR CI gates remain the authoritative acceptance.
+- **Boundaries:** one Kafka partition, RF=1 dev Compose, ClickHouse process stop/start without disk loss; the direct-to-Kafka experiment does not verify transactional Ledger/Outbox for these 24 records. Retention-expiry estimates are not guarantees and no scheduled alert integration exists.
+
 ## Still unverified
 
-- Measured and reproducible throughput, P95/P99 end-to-end query latency, and saturation limits; the 100,000 event count is verified but those performance measures are not.
+- Measured and reproducible throughput, P95/P99 end-to-end query latency, saturation limits, and a deployed lag-age/retention risk alerting pipeline; the 100,000 event count is verified but performance measures are not.
 - Consumer rebalance fencing beyond tested 2-worker conditions; durable DLQ redrive and retention governance; and broker/partition/rack fault combinations beyond the tested one-partition RF3 HA lab.
 - Production Kafka topology with dedicated controllers, cross-zone placement, authenticated listeners, real persistent storage and operational recovery. Developer Compose remains one Broker with RF=1.
 - Full end-to-end at-least-once correctness under all documented failure injections.

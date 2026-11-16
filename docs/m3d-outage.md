@@ -1,6 +1,6 @@
 # M3d: ClickHouse outage during Kafka batch + retention risk evidence
 
-**Status:** implemented in PR; the final Docker CI run is the evidence gate.
+**Status:** first real Docker integration PASS ([run 43896683695](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43896683695)); PR #13 final CI remains the merge gate.
 
 ## Contract
 
@@ -20,9 +20,9 @@ The test uses Docker `stop` and `start` on the existing `clickhouse` service, pr
 `internal/lagrisk` assesses the observed **offset distance**, oldest unconsumed Kafka record's **broker timestamp**, a finite configured retention period and a safety margin:
 
 - `no_backlog`: committed offset equals log end
-- `healthy`: estimated time-to-expiry greater than margin
-- `warning`: equals margin
-- `critical`: positive but less than margin
+- `healthy`: estimated time-to-expiry greater than 2 × margin
+- `warning`: positive headroom above the critical margin, but at or below 2 × margin
+- `critical`: positive headroom at or below the configured safety margin
 - `expiry_risk`: oldest age has reached/exceeded configured retention
 - `data_gap`: committed offset is already below broker log start (potentially unrecoverable gap)
 
@@ -38,3 +38,9 @@ make m3d-outage-smoke
 The CI artifact `m3d-clickhouse-recovery-report` includes ACK counts, committed prefixes, replay offsets, trusted ClickHouse counts, Kafka log start/end and measured timestamp-based retention headroom. This scope does not test abrupt disk loss, every possible partial insert failure, live multi-broker replication, Toxiproxy, or scheduled alert delivery.
 
 For financial statements always use the authoritative PostgreSQL `usage_ledger`, not the ClickHouse raw table. This fault experiment uses direct Kafka publication, not the Ledger/Outbox path. No exactly-once or absolute zero-loss claim.
+
+## Initial measured evidence
+
+[Real CI run 43896683695](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43896683695) returned PASS: committed source offset remained 8 across a ClickHouse stop during batch 2; the restarted group resumed offset 8 and committed through offset 24. The final physical/raw and trusted event counts were both 24, with zero integrity conflicts. Its JSON Artifact records the broker-measured offset distance and oldest pending broker timestamp. Final CI also tests that warning has a nonzero time window rather than equality with a single instant.
+
+The retention threshold is a *risk-classification policy*, not proof of a broker deletion deadline. Kafka can delete full segments based on active retention settings and other mechanics; operational use should obtain topic-effective retention configuration and scrape Kafka coordinator offsets rather than trust user-supplied values.
