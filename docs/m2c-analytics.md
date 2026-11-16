@@ -29,7 +29,7 @@ GROUP BY tenant_id ORDER BY tenant_id;
 SELECT count(), sum(raw_copies) FROM telemetry.inference_events_integrity_v1;
 
 -- Explain physical duplication without changing logical counting
-SELECT event_id, raw_copies, payload_hash
+SELECT event_id, raw_copies, canonical_hash
 FROM telemetry.inference_events_dedup_v1
 WHERE raw_copies > 1
 LIMIT 50;
