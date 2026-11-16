@@ -1,6 +1,17 @@
 # Single-node developer environment ONLY. RF=1 and minISR=1 do NOT establish HA.
 services:
+  # Named Docker volumes are initially owned by root, but apache/kafka runs
+  # as uid=1000. Initialize ownership without running the broker as root.
+  kafka-volume-init:
+    image: busybox:1.36
+    user: "0:0"
+    command: ["sh", "-c", "chown -R 1000:1000 /kafka-data"]
+    volumes:
+      - kafka_data:/kafka-data
   kafka:
+    depends_on:
+      kafka-volume-init:
+        condition: service_completed_successfully
     image: apache/kafka:4.1.0
     hostname: kafka
     ports:
