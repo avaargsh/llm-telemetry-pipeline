@@ -2,6 +2,7 @@ package ingest
 
 import (
     "context"
+    "encoding/json"
     "errors"
     "reflect"
     "testing"
@@ -63,4 +64,21 @@ func TestDLQStableIdentityOnReplay(t *testing.T){
     a:=DeadLetter{SourceTopic:"usage.critical.v1",SourcePartition:3,SourceOffset:99}
     b:=a
     if a.StableKey()!=b.StableKey(){t.Fatal("redelivery generated a different DLQ identity")}
+}
+
+func TestInvalidUsageSealGoesToDLQ(t *testing.T){
+    steps:=[]string{}
+    dlq:=&orderedDLQ{calls:&steps}
+    offsets:=&orderedCommitter{calls:&steps}
+    valid:=sample(t,1,22)
+    var e event.UsageEvent
+    if err:=json.Unmarshal(valid.Value,&e);err!=nil{t.Fatal(err)}
+    e.PromptTokens++ // invalidates previously sealed payload_hash
+    corrupted,err:=json.Marshal(e);if err!=nil{t.Fatal(err)}
+    valid.Value=corrupted
+    if err:=ProcessBatchWithDLQ(context.Background(),[]Message{valid},orderedSink{&steps},offsets,dlq);err!=nil{t.Fatal(err)}
+    if len(dlq.records)!=1 || len(dlq.records[0].Reason)<18 || dlq.records[0].Reason[:18]!="invalid_usage_event"{
+        t.Fatalf("schema/seal invalid event was not classified for DLQ: %+v",dlq.records)
+    }
+    if !reflect.DeepEqual(steps,[]string{"dlq","offset"}){t.Fatalf("invalid seal reached ClickHouse: %v",steps)}
 }
