@@ -19,7 +19,7 @@ func options()Options{
         Grace:3*time.Minute,MaxRecords:100,
     }
 }
-func ledger(id string,publishedAt *time.Time)LedgerRecord{
+func ledgerEntry(id string,publishedAt *time.Time)LedgerRecord{
     return LedgerRecord{EventID:id,TenantID:"tenant_001",ProjectID:"project_001",
         RequestID:"req-"+id,Model:"Qwen3-32B",PayloadHash:strings.Repeat("a",64),
         PromptTokens:100,CompletionTokens:20,HasOutbox:true,PublishedAt:publishedAt}
@@ -34,8 +34,8 @@ func TestRunClassifiesWithoutDoubleCountingTokens(t *testing.T){
     old:=o.Now.Add(-10*time.Minute)
     recent:=o.Now.Add(-1*time.Minute)
     ledgers:=[]LedgerRecord{
-        ledger("a", &old), ledger("b",&old),ledger("c",&old),
-        ledger("d",&old),ledger("e",&old),ledger("f",nil),ledger("g",&recent),
+        ledgerEntry("a", &old), ledgerEntry("b",&old),ledgerEntry("c",&old),
+        ledgerEntry("d",&old),ledgerEntry("e",&old),ledgerEntry("f",nil),ledgerEntry("g",&recent),
     }
     views:=[]AnalyticsRecord{
         analysis("a"),analysis("b"),analysis("c"),analysis("e"),analysis("h"),
@@ -65,7 +65,7 @@ func TestRunTreatsPendingAndGraceAsIncompleteNotLoss(t *testing.T){
     o:=options()
     recent:=o.Now.Add(-time.Minute)
     r,err:=Run(context.Background(),o,
-        ledgerFixture{rows:[]LedgerRecord{ledger("unpublished",nil),ledger("recent",&recent)}},
+        ledgerFixture{rows:[]LedgerRecord{ledgerEntry("unpublished",nil),ledgerEntry("recent",&recent)}},
         analysisFixture{})
     if err!=nil{t.Fatal(err)}
     if r.Result!="INCOMPLETE"{t.Fatalf("expected incomplete, got %s",r.Result)}
@@ -73,14 +73,14 @@ func TestRunTreatsPendingAndGraceAsIncompleteNotLoss(t *testing.T){
 }
 func TestRunRequiresFullBoundedScanAndUniqueIDs(t *testing.T){
     o:=options();o.MaxRecords=1
-    _,err:=Run(context.Background(),o,ledgerFixture{rows:[]LedgerRecord{ledger("a",nil),ledger("b",nil)}},analysisFixture{})
+    _,err:=Run(context.Background(),o,ledgerFixture{rows:[]LedgerRecord{ledgerEntry("a",nil),ledgerEntry("b",nil)}},analysisFixture{})
     if err==nil||!strings.Contains(err.Error(),"limit"){t.Fatalf("truncated scan accepted: %v",err)}
     o.MaxRecords=10
     _,err=Run(context.Background(),o,ledgerFixture{},analysisFixture{rows:[]AnalyticsRecord{analysis("a"),analysis("a")}})
     if err==nil||!strings.Contains(err.Error(),"duplicate"){t.Fatalf("duplicate CH source accepted: %v",err)}
 }
 func TestMissingOutboxIsIntegrityViolation(t *testing.T){
-    r:=ledger("orphan-ledger",nil);r.HasOutbox=false
+    r:=ledgerEntry("orphan-ledger",nil);r.HasOutbox=false
     out,err:=Run(context.Background(),options(),ledgerFixture{rows:[]LedgerRecord{r}},analysisFixture{})
     if err!=nil{t.Fatal(err)}
     if out.Counts[StatusOutboxMissing]!=1||out.Result!="FAIL"{t.Fatalf("lost Outbox record not detected: %+v",out)}
