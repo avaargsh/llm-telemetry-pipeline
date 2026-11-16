@@ -8,7 +8,8 @@
 | M2b | Durable DLQ with source identity and ACK-before-offset-commit | **PASS**: unit + real Kafka DLQ poison event |
 | M2c | Hash-consistent on-read dedup and integrity quarantine | **PASS**: real ClickHouse replay/conflict/legacy hash tests |
 | M3a | Kafka replay after lost ClickHouse ACK / failed offset commit | **PASS/MERGED**: real Kafka + ClickHouse tests and full regression CI |
-| M3b | Consumer rebalance fencing; 3-broker Kafka failure envelope | **NOT VERIFIED** |
+| M3b-P0 | Generation-fenced consumer, 2 workers and 2 partitions | **PR #11**: real Kafka/ClickHouse rebalance test PASS; final full CI pending |
+| M3b-P1 | 3-broker KRaft failure envelope (RF=3/minISR=2) | **NOT VERIFIED**, Issue #10 |
 | M3c | Ledger/ClickHouse read-only reconciler, event-level discrepancy matrix and JSON evidence | **PASS/MERGED**: PostgreSQL+ClickHouse Docker matrix, CLI exit-code assertion and published CI Artifact |
 | M2d | Authorized DLQ redrive, retention/ACLs, audit | **NOT IMPLEMENTED** |
 | M4 | Prometheus/Grafana, P95/P99, lag age, recovery throughput/latency SLO | **NOT IMPLEMENTED** |

@@ -65,10 +65,19 @@
 
 - Final PR #8 [CI evidence](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43884245869) passed and published the `m3c-reconciliation-report` downloadable JSON Artifact. The complete Go/M1/M2/M3a regression matrix passed on the same PR head; merged at commit `5bdf978`.
 
+## M3b-P0 generation-fenced consumer/rebalance evidence (2026-11-16)
+
+- [PR #11](https://github.com/avaargsh/llm-telemetry-pipeline/pull/11) makes the real production `ingest-worker` use `kafka.ConsumerGroup` generations and per-partition readers, rather than attaching an untrusted local epoch to the high-level Reader API.
+- Unit tests cover next-offset semantics despite numeric Kafka offset gaps, rejection of unassigned partitions, a generation canceled after an INSERT but before broker commit, broker generation errors, and retryable coordinator startup errors vs. permanent authorization failures.
+- Initial Go compile failure (unused imports) was corrected. A real Kafka DLQ regression then exposed `GroupCoordinatorNotAvailable` on startup; the new worker now backs off for transient group-coordinator/rebalance errors, and does not retry permanent authorization/configuration errors.
+- [Real Docker 2-worker, 2-partition rebalance CI](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43887608098): **PASS**. Worker A first inserted both events in ClickHouse, was revoked while processing; Worker B acquired an uncommitted partition and committed at least one replayed event. **Each event had two raw ClickHouse copies, one trusted logical event, and no hash conflict**. Machine-readable `m3b-rebalance-evidence` artifact published.
+- [1k/100k Kafka→ClickHouse new-worker regression](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43887607852): **PASS** on the same behavior implementation.
+- This is still **single-broker RF=1**, not a 3-broker HA proof. Full final CI status is linked from PR #11.
+
 ## Still unverified
 
 - Measured and reproducible throughput, P95/P99 end-to-end query latency, and saturation limits; the 100,000 event count is verified but those performance measures are not.
-- Consumer rebalance fencing during in-flight writes, durable DLQ redrive and retention governance, and source Kafka broker faults (M3a covers lost ClickHouse ACK and failed offset commit).
+- Consumer rebalance fencing against coordinator/member race conditions beyond the tested 2-worker experiment; durable DLQ redrive and retention governance; and replicated multi-broker faults (M3a covers lost ClickHouse ACK and failed offset commit, M3b-P0 covers 2-worker revocation).
 - Production Kafka 3-broker/replication-failure behavior; developer Compose has only one broker and RF=1.
 - Full end-to-end at-least-once correctness under all documented failure injections.
 
