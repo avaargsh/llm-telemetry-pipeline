@@ -1,0 +1,31 @@
+name: m4a-alertmanager-webhook-e2e
+on:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  alert-delivery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go mod download
+      - run: go mod verify
+      - name: Real Prometheus + Alertmanager webhook firing/resolved E2E
+        env:
+          M4A_REPORT_PATH: /tmp/m4a-alert-delivery.json
+        run: bash scripts/m4a-alert-delivery-smoke.sh
+      - name: Upload webhook delivery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m4a-alertmanager-webhook-evidence
+          path: /tmp/m4a-alert-delivery.json
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Container diagnostics
+        if: failure()
+        run: docker compose -f deployments/alerting/docker-compose.yml logs --tail=100 || true
