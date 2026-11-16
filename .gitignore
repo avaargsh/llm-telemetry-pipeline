@@ -1,0 +1,5 @@
+.env
+out/
+*.ndjson
+*.log
+.DS_Store
