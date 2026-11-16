@@ -8,7 +8,6 @@ import (
     "errors"
     "flag"
     "log"
-    "os"
     "os/signal"
     "strings"
     "syscall"
