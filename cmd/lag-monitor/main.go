@@ -25,7 +25,7 @@ func main(){
  listen:=flag.String("listen","127.0.0.1:9194","HTTP listen address (default loopback)")
  interval:=flag.Duration("interval",5*time.Second,"Kafka scrape interval")
  timeout:=flag.Duration("timeout",4*time.Second,"Kafka scrape timeout")
- margin:=flag.Duration("safety-margin",2*time.Minute,"retention critical safety margin")
+ margin:=flag.Duration("safety-margin",2*time.Hour,"retention critical safety margin")
  flag.Parse()
  if *interval<=0||*timeout<=0||*timeout>=*interval||
     *margin<=0||*group==""||*topic==""||*brokers==""||*partition<0{
