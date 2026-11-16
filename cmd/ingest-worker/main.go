@@ -32,7 +32,9 @@ func (c groupCommitter) Commit(ctx context.Context,messages []ingest.Message)err
 type KafkaDLQ struct{writer *kafka.Writer}
 func(p KafkaDLQ)Publish(ctx context.Context,d ingest.DeadLetter)error{
     encoded,err:=json.Marshal(d);if err!=nil{return err}
-    return p.writer.WriteMessages(ctx,kafka.Message{Key:[]byte(d.StableKey()),Value:encoded})
+    publishCtx,cancel:=context.WithTimeout(ctx,15*time.Second)
+    defer cancel()
+    return p.writer.WriteMessages(publishCtx,kafka.Message{Key:[]byte(d.StableKey()),Value:encoded})
 }
 func run(ctx context.Context,reader *kafka.Reader,sink *clickhouse.HTTPWriter,dlq ingest.DeadLetterPublisher,batchSize int,fetchWait time.Duration)error{
     batch:=make([]ingest.Message,0,batchSize)
