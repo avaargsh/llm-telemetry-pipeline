@@ -14,6 +14,7 @@ diagnose(){
 }
 trap diagnose EXIT
 
+"${compose[@]}" build lag-exporter
 "${compose[@]}" up -d kafka
 for i in $(seq 1 90);do
  if "${compose[@]}" exec -T kafka /opt/kafka/bin/kafka-topics.sh \
