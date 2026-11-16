@@ -1,0 +1,35 @@
+name: m3b-rebalance-fencing
+on:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  rebalance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go mod download
+      - run: go mod verify
+      - name: Two-worker two-partition real Kafka rebalance fault injection
+        env:
+          TEST_KAFKA_BROKER: localhost:29092
+          TEST_CLICKHOUSE_HTTP: http://localhost:18123
+          M3B_REPORT_PATH: /tmp/m3b-rebalance-report.json
+        run: bash scripts/m3b-rebalance-smoke.sh
+      - name: Upload machine-checkable rebalance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m3b-rebalance-evidence
+          path: /tmp/m3b-rebalance-report.json
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Container diagnostics and cleanup
+        if: always()
+        run: |
+          docker compose -f deployments/docker-compose.yml logs --tail=80 kafka clickhouse || true
+          docker compose -f deployments/docker-compose.yml down -v
