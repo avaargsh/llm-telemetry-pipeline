@@ -20,6 +20,10 @@ jobs:
             -v "$PWD/deployments/observability:/rules:ro" \
             prom/prometheus:v3.4.0 \
             check rules /rules/retention-alerts.yml
+          docker run --rm --entrypoint=/bin/promtool \\
+            -v "$PWD/deployments/observability:/rules:ro" \\
+            prom/prometheus:v3.4.0 \\
+            test rules /rules/retention-alerts.test.yml
       - name: Real Kafka offsets and throttled ClickHouse recovery
         env:
           M4A_REPORT_PATH: /tmp/m4a-monitor-report.json

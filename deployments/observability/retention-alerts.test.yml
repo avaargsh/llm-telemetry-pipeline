@@ -1,0 +1,83 @@
+# Deterministic alert transitions. These prove Prometheus rule evaluation
+# semantics, not delivery by a production Alertmanager instance.
+rule_files:
+  - /rules/retention-alerts.yml
+evaluation_interval: 15s
+tests:
+  - name: warning enters then resolves when Kafka catches up
+    interval: 15s
+    input_series:
+      - series: telemetry_kafka_lag_monitor_up
+        values: '1x20'
+      - series: 'telemetry_kafka_retention_warning{group="g",topic="t",partition="0"}'
+        values: '1x8 0x11'
+    alert_rule_test:
+      - eval_time: 1m30s
+        alertname: LLMUsageKafkaRetentionEarlyWarning
+        exp_alerts:
+          - exp_labels:
+              group: g
+              topic: t
+              partition: "0"
+              severity: warning
+            exp_annotations:
+              summary: Kafka oldest pending record is approaching estimated retention window
+      - eval_time: 3m
+        alertname: LLMUsageKafkaRetentionEarlyWarning
+        exp_alerts: []
+
+  - name: critical and committed-before-log-start recover
+    interval: 15s
+    input_series:
+      - series: telemetry_kafka_lag_monitor_up
+        values: '1x20'
+      - series: 'telemetry_kafka_retention_critical{group="g",topic="t",partition="0"}'
+        values: '1x4 0x15'
+      - series: 'telemetry_kafka_retention_data_gap{group="g",topic="t",partition="0"}'
+        values: '1x4 0x15'
+    alert_rule_test:
+      - eval_time: 30s
+        alertname: LLMUsageKafkaRetentionCritical
+        exp_alerts:
+          - exp_labels:
+              group: g
+              topic: t
+              partition: "0"
+              severity: critical
+            exp_annotations:
+              summary: Kafka oldest pending record is at retention safety margin or beyond
+      - eval_time: 30s
+        alertname: LLMUsageKafkaCommittedBeforeLogStart
+        exp_alerts:
+          - exp_labels:
+              group: g
+              topic: t
+              partition: "0"
+              severity: critical
+            exp_annotations:
+              summary: Consumer committed offset is already below Kafka log-start offset
+              description: This can indicate unrecoverable loss of unconsumed records. Requires manual investigation.
+      - eval_time: 2m
+        alertname: LLMUsageKafkaRetentionCritical
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: LLMUsageKafkaCommittedBeforeLogStart
+        exp_alerts: []
+
+  - name: collector unavailable fires then resolves
+    interval: 15s
+    input_series:
+      - series: telemetry_kafka_lag_monitor_up
+        values: '0x8 1x12'
+    alert_rule_test:
+      - eval_time: 1m30s
+        alertname: LLMUsageKafkaLagMonitorUnavailable
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: Kafka telemetry lag data is unavailable or stale
+              description: The collector cannot verify Kafka offsets, timestamps or effective retention. Do not interpret absent observations as zero lag.
+      - eval_time: 3m
+        alertname: LLMUsageKafkaLagMonitorUnavailable
+        exp_alerts: []
