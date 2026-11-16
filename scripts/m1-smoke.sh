@@ -56,7 +56,13 @@ for attempt in $(seq 1 90); do
   echo "M1 sample: raw_rows=${raw_rows:-0} unique_events=${unique_events:-0}"
   if [[ "${unique_events:-0}" == "$count" ]]; then
     if (( raw_rows < count )); then echo 'Fewer raw rows than unique events' >&2; exit 1; fi
-    echo "PASS: ${unique_events} unique usage events, ${raw_rows} raw rows"
+    trusted_count=$(clickhouse 'SELECT count() FROM inference_events_dedup_v1 FORMAT TabSeparatedRaw' | tr -d '[:space:]')
+    integrity_count=$(clickhouse 'SELECT count() FROM inference_events_integrity_v1 FORMAT TabSeparatedRaw' | tr -d '[:space:]')
+    if [[ "$trusted_count" != "$count" || "$integrity_count" != 0 ]]; then
+      echo "Analytical projection mismatch: expected=$count trusted=$trusted_count integrity=$integrity_count" >&2
+      exit 1
+    fi
+    echo "PASS: ${unique_events} unique usage events, ${raw_rows} raw rows, ${trusted_count} trusted analytical events"
     exit 0
   fi
   if ! kill -0 "$worker_pid" 2>/dev/null; then echo 'Consumer stopped prematurely' >&2; exit 1; fi
