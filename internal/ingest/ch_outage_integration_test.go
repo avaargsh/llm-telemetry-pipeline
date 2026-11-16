@@ -6,6 +6,11 @@ import (
  "fmt"
  "os"
  "os/exec"
+ "net/http"
+ "strings"
+ "io"
+
+ "github.com/avaargsh/llm-telemetry-pipeline/internal/lagrisk"
  "sync"
  "testing"
  "time"
@@ -48,6 +53,18 @@ func(s *captureInsert)Insert(ctx context.Context,events []event.UsageEvent)error
  s.mu.Unlock()
  return s.real.Insert(ctx,events)
 }
+func pingClickHouseM3D(endpoint string) bool{
+ client:=&http.Client{Timeout:2*time.Second}
+ req,err:=http.NewRequest(http.MethodPost,endpoint+"?database=telemetry",strings.NewReader("SELECT 1"))
+ if err!=nil{return false}
+ req.SetBasicAuth("telemetry","localdev-only")
+ resp,err:=client.Do(req)
+ if err!=nil{return false}
+ defer resp.Body.Close()
+ data,err:=io.ReadAll(io.LimitReader(resp.Body,64))
+ return err==nil&&resp.StatusCode==200&&strings.TrimSpace(string(data))=="1"
+}
+
 func TestClickHouseOutageMidStreamKeepsCommittedPrefixAndReplays(t *testing.T){
  if os.Getenv("TEST_M3D_OUTAGE")!="1"{t.Skip("requires isolated Kafka/ClickHouse fault lab")}
  broker:=os.Getenv("TEST_KAFKA_BROKER")
@@ -93,17 +110,43 @@ func TestClickHouseOutageMidStreamKeepsCommittedPrefixAndReplays(t *testing.T){
  prefix:=append([]int64(nil),committed...)
  commitsMu.Unlock()
  if len(prefix)!=1||prefix[0]!=7{t.Fatalf("source advanced past CH failure; committed offsets=%v",prefix)}
+ // Inspect actual broker offsets and the oldest still-unconsumed Kafka
+ // record while ClickHouse is unavailable. Topic timestamp policy is
+ // LogAppendTime and retention.ms=600000 in the isolated CI script.
+ brokerConn,err:=kafka.DialLeader(ctx,"tcp",broker,topic,0)
+ if err!=nil{t.Fatal(err)}
+ firstOffset,err:=brokerConn.ReadFirstOffset()
+ if err!=nil{brokerConn.Close();t.Fatal(err)}
+ endOffset,err:=brokerConn.ReadLastOffset()
+ _=brokerConn.Close()
+ if err!=nil{t.Fatal(err)}
+ probe:=kafka.NewReader(kafka.ReaderConfig{Brokers:[]string{broker},Topic:topic,Partition:0,
+  MinBytes:1,MaxBytes:10e6,MaxWait:250*time.Millisecond})
+ if err:=probe.SetOffset(prefix[0]+1);err!=nil{probe.Close();t.Fatal(err)}
+ probeCtx,probeStop:=context.WithTimeout(ctx,10*time.Second)
+ oldest,err:=probe.FetchMessage(probeCtx)
+ probeStop()
+ _=probe.Close()
+ if err!=nil{t.Fatalf("Kafka oldest uncommitted fetch: %v",err)}
+ var oldestUsage event.UsageEvent
+ if err:=json.Unmarshal(oldest.Value,&oldestUsage);err!=nil{t.Fatal(err)}
+ if oldestUsage.EventID!=ack[8].EventID||oldest.Offset!=8{
+  t.Fatalf("first uncommitted record differs: offset=%d event=%s",oldest.Offset,oldestUsage.EventID)
+ }
+ risk,err:=lagrisk.Assess(lagrisk.Snapshot{
+  Topic:topic,Partition:0,LogStartOffset:firstOffset,LogEndOffset:endOffset,
+  CommittedOffset:prefix[0]+1,OldestUnconsumedTimestamp:oldest.Time,
+  Now:time.Now().UTC(),Retention:10*time.Minute,SafetyMargin:2*time.Minute,
+ })
+ if err!=nil{t.Fatalf("lag/retention assessment: %v",err)}
+ if risk.LagOffsetDistance!=16||risk.Status!=lagrisk.StatusHealthy{
+  t.Fatalf("unexpected outage lag/risk: %+v",risk)
+ }
  cmd:=exec.CommandContext(ctx,"docker","compose","-f","deployments/docker-compose.yml","start","clickhouse")
  cmd.Dir="../.."
  if out,err:=cmd.CombinedOutput();err!=nil{t.Fatalf("cannot restart ClickHouse: %v: %s",err,out)}
  var up bool
  for i:=0;i<80;i++{
-  attemptCtx,stop:=context.WithTimeout(ctx,2*time.Second)
-  err:=sink.Insert(attemptCtx,[]event.UsageEvent{}) // deliberately no-op: not health proof
-  stop()
-  _=err
-  // Real SELECT proof will be checked with m3Query below after recovery;
-  // a timed SELECT can return transient failures while server starts.
   if pingClickHouseM3D(endpoint){up=true;break}
   select{case <-ctx.Done():t.Fatalf("ClickHouse did not recover: %v",ctx.Err());case <-time.After(time.Second):}
  }
@@ -146,6 +189,7 @@ func TestClickHouseOutageMidStreamKeepsCommittedPrefixAndReplays(t *testing.T){
  report:=map[string]any{"scenario":"ClickHouse stopped during second batch Insert",
   "topic":topic,"group":group,"producer_acks":24,
   "initial_committed_offsets":prefix,"recovery_committed_offsets":replay,
+  "outage_retention_assessment":risk,
   "first_recovered_event_id":recoverySink.first,
   "raw_rows":24,"trusted_event_ids":24,"integrity_conflicts":0,
   "fail_closed":true,"recovered":true,
