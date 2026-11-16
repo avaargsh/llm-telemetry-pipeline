@@ -102,9 +102,16 @@
 - Prometheus alert rules cover collector unavailable, retention warning, critical/expiry-risk and committed-before-log-start gap. **Final head `921b23f`: all 11 CI suites PASS**, including [real Kafka/ClickHouse + promtool tests](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43907781516) and [100k M1](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43907781622); `m3e-live-kafka-lag-evidence` JSON artifact uploaded. Squash-merged as `049a3d8`. Alertmanager routing and production deployment are not completed.
 - **Limits:** a lag offset distance is not guaranteed to equal the number of available messages, retention is a segment-level policy, and the CI experiment uses one local Kafka partition and a test-only HTTP gate. PostgreSQL ledger remains the only financial authority.
 
+## M4a real Prometheus → Alertmanager → webhook delivery (2026-11-17)
+
+- [PR #22](https://github.com/avaargsh/llm-telemetry-pipeline/pull/22) adds an isolated real Prometheus v3.5.0 + Alertmanager v0.28.1 Compose stack using the **unchanged M3e production-intent alert rules** and a strict CI-only Go webhook evidence receiver.
+- [Initial real E2E CI](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43910573615): **PASS**. Webhook received both **firing and resolved** deliveries for `KafkaRetentionCritical`, `KafkaCommittedBeforeLogStart`, and `KafkaLagCollectorUnavailable`, six notifications total. The collector-unavailable route honored the rule's existing `for:30s` hold. The `m4a-alertmanager-webhook-evidence` JSON Artifact contains identity, status, severity, timestamp and delivery latency.
+- **Final PR #22 head `b24d68b`: all 12 CI workflows PASS**, including [final real delivery E2E](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43911025540), Go race/vet/build, M1 100k, M2 Ledger/DLQ, M3 replay/rebalance/HA and M3e Kafka lag/throttle regression. Squash-merged as `ce3f87f`.
+- **Boundary:** Metric samples were synthetic CI inputs, but Prometheus rule evaluation, Alertmanager routing and HTTP webhook transport were real. This does **not** validate an authenticated Slack/PagerDuty/SMS/email on-call destination, missed-notification retries, HA Alertmanager or delivery SLO. Real Kafka sampling and ClickHouse slow-write recovery are separately verified in M3e PR #17.
+
 ## Still unverified
 
-- Sustained workload throughput, P95/P99 end-to-end query latency, saturation limits and fully deployed Grafana/Alertmanager routing. The 100,000-event count and M3e micro-recovery throughput are not production performance SLOs.
+- Sustained workload throughput, P95/P99 end-to-end query latency, saturation limits and fully deployed Grafana dashboards, authenticated external on-call routing and HA Alertmanager. The 100,000-event count and M3e micro-recovery throughput are not production performance SLOs.
 - Consumer rebalance fencing beyond tested 2-worker conditions; durable DLQ redrive and retention governance; and broker/partition/rack fault combinations beyond the tested one-partition RF3 HA lab.
 - Production Kafka topology with dedicated controllers, cross-zone placement, authenticated listeners, real persistent storage and operational recovery. Developer Compose remains one Broker with RF=1.
 - Full end-to-end at-least-once correctness under all documented failure injections.
