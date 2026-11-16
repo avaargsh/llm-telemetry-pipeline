@@ -40,7 +40,7 @@ func TestInsertUsesSynchronousJSONEachRow(t *testing.T) {
     if err:=w.Insert(context.Background(),[]event.UsageEvent{testEvent(t)});err!=nil{t.Fatal(err)}
     if !strings.Contains(query,"async_insert=0") || !strings.Contains(query,"wait_end_of_query=1") {t.Fatalf("unsafe insert options: %s",query)}
     if len(rows)!=1 || rows[0]["model"]!="Qwen3-32B" || rows[0]["event_time"]!="2026-11-16 11:00:00.000" {t.Fatalf("wrong rows: %+v",rows)}
-    if _,ok:=rows[0]["payload_hash"];ok {t.Fatal("payload_hash not in raw table schema")}
+    if rows[0]["payload_hash"]!=testEvent(t).PayloadHash {t.Fatalf("payload_hash was not preserved: %+v",rows[0]["payload_hash"])}
 }
 
 func TestInsertNeverAcceptsInvalidEvents(t *testing.T) {

@@ -1,6 +1,6 @@
 # LLM Telemetry Pipeline
 
-> **Status:** M1 and M2a Ledger + Outbox merged and CI verified; M2b durable poison-message DLQ is in [PR #5](https://github.com/avaargsh/llm-telemetry-pipeline/pull/5). Not an exactly-once or zero-loss system.
+> **Status:** M1, M2a (Ledger/Outbox), and M2b (durable DLQ) are merged. M2c replay-safe ClickHouse analytics is in [PR #6](https://github.com/avaargsh/llm-telemetry-pipeline/pull/6). No exactly-once or zero-loss claim.
 
 Go + Kafka (KRaft) + ClickHouse + PostgreSQL for reliable multi-tenant LLM inference usage telemetry.
 
@@ -46,7 +46,8 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 - **M1:** Kafka Go Publisher/Consumer, manual offset commits after synchronous confirmed ClickHouse inserts, Docker CI at 1,000 and 100,000 events.
 - **M2a merged:** PostgreSQL Ledger + Outbox atomic insert; unique event/request idempotency and conflict detection; lease-fenced Outbox claiming, retry with persistent backoff, and mark-published only after Kafka ACK.
 - Real PostgreSQL integration tests and Docker smoke for persisted records across Kafka outage.
-- **M2b in review:** malformed or invalidly sealed events are Kafka-ACKed to `events.dlq.v1` before source offsets advance; unknown DLQ ACK is fail-closed.
+- **M2b merged:** malformed or invalidly sealed events are Kafka-ACKed to `events.dlq.v1` before source offsets advance; unknown DLQ ACK is fail-closed.
+- **M2c in review:** signed event hash now persisted in ClickHouse; a query-level dedup view excludes unsealed/contradictory Event IDs and an integrity view reports them. This protects analysis counts, not billing.
 - Explicitly incomplete: DLQ redrive/retention policy, ACK-loss fault injection, recovery fencing under rebalances, 3-broker Kafka HA, reconciliation service, P95/P99 performance SLO, production authentication/secret management.
 
 ## Docs
@@ -54,6 +55,7 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 - [M1 runbook](docs/m1-runbook.md)
 - [M2 ledger + Outbox](docs/m2-ledger-outbox.md)
 - [M2 durable DLQ](docs/m2-dlq.md)
+- [M2c replay-safe analytics](docs/m2c-analytics.md)
 - [Reliability contract](docs/reliability-contract.md)
 - [Verification evidence](docs/verification-record.md)
 - [Fault matrix](docs/fault-matrix.md)
