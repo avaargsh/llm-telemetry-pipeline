@@ -6,6 +6,7 @@ import (
  "net/http"
  "net/http/httptest"
  "strings"
+ "strconv"
  "testing"
  "time"
 
@@ -71,7 +72,7 @@ func TestMetricsEscapesUserControlledLabels(t *testing.T){
  rec:=httptest.NewRecorder()
  m.ServeHTTP(rec,httptest.NewRequest("GET","/metrics",nil))
  if strings.Contains(rec.Body.String(),"topic=\"x\"\\\n y\""){t.Fatal("unescaped label injection")}
- if !strings.Contains(rec.Body.String(),`topic="x\\"\\\\\n y"`){
+ if !strings.Contains(rec.Body.String(),"topic="+strconv.Quote(source.snap.Topic)){
   t.Fatalf("escaped topic not found: %s",rec.Body.String())
  }
 }
