@@ -8,7 +8,6 @@ import (
  "net/http"
  "net/http/httptest"
  "os"
- "strings"
  "sync"
  "testing"
  "time"
@@ -165,5 +164,4 @@ drained:
   if err:=os.WriteFile(p,b,0600);err!=nil{t.Fatal(err)}
  }
  t.Logf("PASS throttling: Kafka committed=8 with 24 pending, after ACK resumed to 32, caught up 24 in %.3fs (%.1f/s); risk resolved",duration.Seconds(),rate)
- _=strings.TrimSpace
 }
