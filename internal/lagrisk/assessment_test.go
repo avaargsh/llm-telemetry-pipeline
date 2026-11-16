@@ -17,7 +17,7 @@ func snap() Snapshot {
 func TestRetentionRiskBoundaries(t *testing.T){
  tests:=[]struct{name string; age time.Duration;want Status;toExpiry time.Duration}{
   {"healthy",time.Minute,StatusHealthy,9*time.Minute},
-  {"warning",8*time.Minute,StatusWarning,2*time.Minute},
+  {"warning",7*time.Minute,StatusWarning,3*time.Minute},
   {"critical",9*time.Minute,StatusCritical,time.Minute},
   {"expired",11*time.Minute,StatusExpired,-time.Minute},
  }
@@ -64,5 +64,28 @@ func TestRetentionRiskCarriesEvidenceAndWarnThreshold(t *testing.T){
  }
  if r.TimeToExpirySeconds<=0 || !strings.Contains(r.Reason,"retention"){
   t.Fatalf("missing retention reason: %+v",r)
+ }
+}
+
+func TestRetentionWarningsHaveRealTimeWindowAndExactBoundaries(t *testing.T){
+ tests:=[]struct{
+  name string
+  remaining time.Duration
+  want Status
+ }{
+  {"outside early warning",4*time.Minute+time.Second,StatusHealthy},
+  {"warning threshold",4*time.Minute,StatusWarning},
+  {"warning just above critical",2*time.Minute+time.Second,StatusWarning},
+  {"critical threshold",2*time.Minute,StatusCritical},
+  {"critical just above expiry",time.Second,StatusCritical},
+  {"expiry",0,StatusExpired},
+ }
+ for _,tc:=range tests{
+  t.Run(tc.name,func(t *testing.T){
+   s:=snap()
+   s.OldestUnconsumedTimestamp=s.Now.Add(-s.Retention+tc.remaining)
+   r,err:=Assess(s);if err!=nil{t.Fatal(err)}
+   if r.Status!=tc.want{t.Fatalf("remaining=%s: got %s expected %s",tc.remaining,r.Status,tc.want)}
+  })
  }
 }
