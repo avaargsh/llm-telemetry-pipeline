@@ -1,0 +1,62 @@
+rule_files:
+  - m3e-alerts.yml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'telemetry_kafka_monitor_up'
+        values: '1 1 0 1 1 1 1'
+      - series: 'telemetry_kafka_retention_state{group="ci",topic="usage.critical.v1",partition="0",state="warning"}'
+        values: '0 1 0 0 0 0 0'
+      - series: 'telemetry_kafka_retention_state{group="ci",topic="usage.critical.v1",partition="0",state="critical"}'
+        values: '0 0 0 1 0 0 0'
+      - series: 'telemetry_kafka_retention_state{group="ci",topic="usage.critical.v1",partition="0",state="data_gap"}'
+        values: '0 0 0 0 1 0 0'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: KafkaTelemetryRetentionWarning
+        exp_alerts:
+          - exp_labels:
+              group: ci
+              topic: usage.critical.v1
+              partition: "0"
+              state: warning
+              severity: warning
+            exp_annotations:
+              summary: Kafka backlog is inside the estimated retention early-warning window
+      - eval_time: 2m
+        alertname: KafkaTelemetryMonitorUnavailable
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: Kafka retention and lag monitor cannot verify source state
+              description: Monitoring must fail closed; do not treat missing Kafka information as an empty backlog.
+      - eval_time: 3m
+        alertname: KafkaTelemetryRetentionCritical
+        exp_alerts:
+          - exp_labels:
+              group: ci
+              topic: usage.critical.v1
+              partition: "0"
+              state: critical
+              severity: critical
+            exp_annotations:
+              summary: Estimated Kafka retention headroom is inside the safety margin
+      - eval_time: 4m
+        alertname: KafkaTelemetryDataGap
+        exp_alerts:
+          - exp_labels:
+              group: ci
+              topic: usage.critical.v1
+              partition: "0"
+              state: data_gap
+              severity: critical
+            exp_annotations:
+              summary: Committed consumer offset is earlier than Kafka log start
+      - eval_time: 5m
+        alertname: KafkaTelemetryRetentionCritical
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: KafkaTelemetryMonitorUnavailable
+        exp_alerts: []
