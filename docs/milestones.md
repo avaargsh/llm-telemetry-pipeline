@@ -14,8 +14,9 @@
 | M3c | Ledger/ClickHouse read-only reconciler, event-level discrepancy matrix and JSON evidence | **PASS/MERGED**: PostgreSQL+ClickHouse Docker matrix, CLI exit-code assertion and published CI Artifact |
 | M3e-P0 | Real Kafka lag sampler, effective retention, Prometheus alerts, slow CH gating and catch-up | **PASS/MERGED**: 11/11 CI incl real Kafka/ClickHouse slow-write recovery, promtool alert firing/recovery, 24-event measured catch-up ([PR #17](https://github.com/avaargsh/llm-telemetry-pipeline/pull/17)) |
 | M2d | Authorized DLQ redrive, retention/ACLs, audit | **NOT IMPLEMENTED** |
-| M4-P0 | Deployable isolated Prometheus + Alertmanager profile with real alert firing and resolution | **PR #21**: real webhook delivery CI running; no production receiver |
-| M4-P1 | Sustained throughput/latency, Grafana dashboards, trace/error metrics, production on-call SLO | **NOT IMPLEMENTED**, Issue #19 |
+| M4a | Actual Prometheus→Alertmanager webhook firing and resolved notifications | **PASS/MERGED**: 3 alerts × firing/resolved = 6 deliveries; real Prometheus/Alertmanager, 12/12 CI ([PR #22](https://github.com/avaargsh/llm-telemetry-pipeline/pull/22)) |
+| M4a+ | Live Kafka group offsets and retention risk → Alertmanager webhook firing/resolution | **PR #21 IN REVIEW**: real Kafka 3-alert × firing/resolved CI PASS, full current HEAD pending |
+| M4b | Further Grafana dashboards, end-to-end P95/P99, sustained saturation and production authenticated on-call/HA/SLO | **NOT IMPLEMENTED** |
 
 ## Ground rules
 

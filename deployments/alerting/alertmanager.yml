@@ -1,0 +1,13 @@
+global:
+  resolve_timeout: 30s
+route:
+  receiver: m4a-webhook
+  group_by: ["alertname", "group", "topic", "partition"]
+  group_wait: 1s
+  group_interval: 2s
+  repeat_interval: 1m
+receivers:
+  - name: m4a-webhook
+    webhook_configs:
+      - url: http://host.docker.internal:19080/alerts
+        send_resolved: true

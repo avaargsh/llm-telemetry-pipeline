@@ -53,9 +53,10 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 - **M3b-P1 merged:** isolated 3-broker KRaft RF=3/minISR=2; real leader failover, ISR rejection, combined-controller quorum loss and recovery of 35 Kafka-ACKed sealed Event IDs (PR #12).
 - **M3d merged:** real ClickHouse stop during a Kafka batch; 24 ACKed events, safe committed prefix 8, recovery replays the remaining 16; broker-derived retention headroom and risk classification ([PR #13](https://github.com/avaargsh/llm-telemetry-pipeline/pull/13), all 10 CI gates PASS).
 - **M3e merged:** read-only Kafka lag/retention exporter with Prometheus/JSON endpoints, broker OffsetFetch + effective Topic DescribeConfigs, fail-closed stale metrics, 4 promtool-verified alerts and real ClickHouse throttling/catch-up CI ([PR #17](https://github.com/avaargsh/llm-telemetry-pipeline/pull/17); 11/11 CI PASS).
-- **M4-P0 in review:** isolated real Prometheus 3.5 + Alertmanager + containerized Kafka Lag Exporter + disposable webhook. End-to-end CI tests actual Kafka retention Warning/Critical and collector-unavailable firing AND resolved delivery ([PR #21](https://github.com/avaargsh/llm-telemetry-pipeline/pull/21)); pending final CI gates.
+- **M4a merged:** real Prometheus→Alertmanager→webhook firing AND resolved delivery for retention critical, Kafka data gap and collector-unavailable alerts; isolated synthetic metrics, not an external on-call pager ([PR #22](https://github.com/avaargsh/llm-telemetry-pipeline/pull/22); 12/12 CI PASS).
+- **M4a+ in review:** actual Kafka group lag/retention and broker unavailability → Dockerized Lag Exporter → Prometheus → Alertmanager → webhook. Warning/Critical/CollectorUnavailable firing+resolved delivered in real CI ([PR #21](https://github.com/avaargsh/llm-telemetry-pipeline/pull/21)); separate from synthetic metric fixture.
 - **M3c merged:** read-only bounded PostgreSQL↔ClickHouse reconciliation, report statuses for replay, pending, grace, missing, orphan, hash conflict, mismatched tokens, and orphaned Outbox; machine-readable JSON with nonzero failure/incomplete exit codes.
-- Explicitly incomplete: external Alertmanager delivery/on-call wiring (Prometheus rules and exporter are available but not deployed to production), DLQ redrive/retention governance, resilience beyond tested rebalance and single-partition broker-failure envelopes, independent production Kafka controllers, scheduled reconciliation/alerting, P95/P99 performance SLO, production authentication/secret management.
+- Explicitly incomplete: authenticated external on-call destinations and production Alertmanager HA/SLO (CI proves delivery only to an isolated webhook), DLQ redrive/retention governance, resilience beyond tested rebalance and single-partition broker-failure envelopes, independent production Kafka controllers, scheduled reconciliation/alerting, P95/P99 performance SLO, production authentication/secret management.
 
 ## Docs
 
@@ -69,7 +70,8 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 - [M3c Ledger/ClickHouse reconciliation](docs/m3c-reconciliation.md)
 - [M3d ClickHouse downtime and retention headroom](docs/m3d-outage.md)
 - [M3e live Kafka Lag exporter, Prometheus alerts and slow ClickHouse recovery](docs/m3e-lag-monitor.md)
-- [M4 local Prometheus/Alertmanager live alert delivery](docs/m4-live-alerts.md)
+- [M4a synthetic metric delivery-layer tests](docs/m4a-alert-delivery.md)
+- [M4a+ actual Kafka lag to Alertmanager delivery](docs/m4-live-alerts.md)
 - [Reliability contract](docs/reliability-contract.md)
 - [Verification evidence](docs/verification-record.md)
 - [Fault matrix](docs/fault-matrix.md)
