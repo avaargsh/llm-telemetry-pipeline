@@ -31,10 +31,18 @@
 - **Kafka-down end-to-end scenario: PASS** in a fresh Docker environment. With Kafka stopped, PostgreSQL stored **100 ledger events** and **100 pending Outbox events**. After Kafka restart, Relay published **100** and ClickHouse reported **100 distinct Event IDs**. Repeating the same immutable 100 inputs resulted in **0 new ledger entries / 100 duplicates**, with ledger and Outbox counts unchanged.
 - Go vet, race tests, build and module checksum verification also run in CI. These tests establish a scoped transactional and replay contract, **not** absolute no-loss or exactly-once delivery.
 
+## M2b poison-message DLQ integration (2026-11-16)
+
+- [GitHub Actions Docker DLQ smoke](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43874203942): **PASS** for a valid usage record plus malformed JSON record.
+- Normal usage event reached ClickHouse; malformed event was ACKed in `events.dlq.v1`.
+- DLQ retained source topic, partition, offset, reason and original raw bytes (base64 encoded).
+- Unit tests check DLQ ACK happens before source offset commit, and an ambiguous DLQ ACK prevents offset progress; invalid SHA-256 usage seal is also routed to DLQ.
+- This is poison-message isolation, not exact-once DLQ delivery or complete redrive governance.
+
 ## Still unverified
 
 - Measured and reproducible throughput, P95/P99 end-to-end query latency, and saturation limits; the 100,000 event count is verified but those performance measures are not.
-- Crash after ClickHouse ACK/before Kafka commit, lost ClickHouse ACK, rebalance fencing, durable DLQ, and source Kafka broker faults.
+- Crash after ClickHouse ACK/before Kafka commit, lost ClickHouse ACK, rebalance fencing, durable DLQ replay/redrive and retention governance, and source Kafka broker faults.
 - Production Kafka 3-broker/replication-failure behavior; developer Compose has only one broker and RF=1.
 - Full end-to-end at-least-once correctness under all documented failure injections.
 
