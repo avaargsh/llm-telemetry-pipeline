@@ -22,6 +22,8 @@ func haCompose(t *testing.T,ctx context.Context,args ...string)string{
  t.Helper()
  a:=append([]string{"compose","-f","deployments/docker-compose-ha.yml"},args...)
  cmd:=exec.CommandContext(ctx,"docker",a...)
+ // go test runs with the package directory as its working directory.
+ cmd.Dir="../.."
  result,err:=cmd.CombinedOutput()
  if err!=nil{t.Fatalf("docker %v: %v\n%s",a,err,result)}
  return string(result)
