@@ -20,6 +20,14 @@ trap cleanup EXIT
 for attempt in $(seq 1 90); do
   if "${compose[@]}" exec -T kafka /opt/kafka/bin/kafka-topics.sh \
        --bootstrap-server kafka:19092 --list >/dev/null 2>&1; then break; fi
+  container_id=$("${compose[@]}" ps -aq kafka)
+  if [[ -n "$container_id" ]]; then
+    state=$(docker inspect --format '{{.State.Status}}' "$container_id" 2>/dev/null || true)
+    if [[ "$state" == "exited" || "$state" == "dead" ]]; then
+      echo "Kafka container exited before readiness" >&2
+      exit 1
+    fi
+  fi
   if [[ "$attempt" -eq 90 ]]; then echo 'Kafka readiness timeout' >&2; exit 1; fi
   sleep 2
 done
