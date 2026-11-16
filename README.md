@@ -49,7 +49,7 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 - **M2b merged:** malformed or invalidly sealed events are Kafka-ACKed to `events.dlq.v1` before source offsets advance; unknown DLQ ACK is fail-closed.
 - **M2c merged:** signed event hash now persisted in ClickHouse; a query-level dedup view excludes unsealed/contradictory Event IDs and an integrity view reports them. This protects analysis counts, not billing.
 - **M3a merged:** real Kafka group restart after confirmed CH INSERT/failed source offset commit and lost ClickHouse ACK, with identical event replay verified against raw and trusted views.
-- **M3b-P0 in review:** the actual ingest-worker now consumes by assigned Kafka group generation; commits are rejected after group revocation, and 2-worker/2-partition replay was verified in real Kafka/ClickHouse CI. See PR #11.
+- **M3b-P0 merged:** the production ingest-worker now consumes per Kafka coordinator Generation; revoked assignments cannot commit offsets, and real 2-worker/2-partition replay was verified in Kafka/ClickHouse CI ([PR #11](https://github.com/avaargsh/llm-telemetry-pipeline/pull/11)).
 - **M3c merged:** read-only bounded PostgreSQL↔ClickHouse reconciliation, report statuses for replay, pending, grace, missing, orphan, hash conflict, mismatched tokens, and orphaned Outbox; machine-readable JSON with nonzero failure/incomplete exit codes.
 - Explicitly incomplete: DLQ redrive/retention governance, in-flight rebalance fencing, 3-broker Kafka HA, scheduled reconciliation and alerting, P95/P99 performance SLO, production authentication/secret management.
 

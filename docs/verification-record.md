@@ -72,7 +72,8 @@
 - Initial Go compile failure (unused imports) was corrected. A real Kafka DLQ regression then exposed `GroupCoordinatorNotAvailable` on startup; the new worker now backs off for transient group-coordinator/rebalance errors, and does not retry permanent authorization/configuration errors.
 - [Real Docker 2-worker, 2-partition rebalance CI](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43887608098): **PASS**. Worker A first inserted both events in ClickHouse, was revoked while processing; Worker B acquired an uncommitted partition and committed at least one replayed event. **Each event had two raw ClickHouse copies, one trusted logical event, and no hash conflict**. Machine-readable `m3b-rebalance-evidence` artifact published.
 - [1k/100k Kafka→ClickHouse new-worker regression](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43887607852): **PASS** on the same behavior implementation.
-- This is still **single-broker RF=1**, not a 3-broker HA proof. Full final CI status is linked from PR #11.
+- **Final PR #11 HEAD `d75da33`: all eight GitHub Actions workflows PASS.** [Real M3b rebalance run](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43888316428) published the machine-readable `m3b-rebalance-evidence` Artifact; [M1 1k/100k regression](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43888316326) and all M2/M3a/M3c regression workflows also passed. PR merged as `1e2b4ad`.
+- This is still **single-broker RF=1**, not a 3-broker HA proof. Replicated durability remains Issue #10.
 
 ## Still unverified
 

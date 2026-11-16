@@ -8,7 +8,7 @@
 | M2b | Durable DLQ with source identity and ACK-before-offset-commit | **PASS**: unit + real Kafka DLQ poison event |
 | M2c | Hash-consistent on-read dedup and integrity quarantine | **PASS**: real ClickHouse replay/conflict/legacy hash tests |
 | M3a | Kafka replay after lost ClickHouse ACK / failed offset commit | **PASS/MERGED**: real Kafka + ClickHouse tests and full regression CI |
-| M3b-P0 | Generation-fenced consumer, 2 workers and 2 partitions | **PR #11**: real Kafka/ClickHouse rebalance test PASS; final full CI pending |
+| M3b-P0 | Generation-fenced consumer, 2 workers and 2 partitions | **PASS/MERGED**: real revocation/replay and full 8-workflow CI matrix ([PR #11](https://github.com/avaargsh/llm-telemetry-pipeline/pull/11)) |
 | M3b-P1 | 3-broker KRaft failure envelope (RF=3/minISR=2) | **NOT VERIFIED**, Issue #10 |
 | M3c | Ledger/ClickHouse read-only reconciler, event-level discrepancy matrix and JSON evidence | **PASS/MERGED**: PostgreSQL+ClickHouse Docker matrix, CLI exit-code assertion and published CI Artifact |
 | M2d | Authorized DLQ redrive, retention/ACLs, audit | **NOT IMPLEMENTED** |
