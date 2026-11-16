@@ -18,8 +18,9 @@ import (
     "github.com/segmentio/kafka-go"
 )
 
-type injectedCommitFailure struct{}
-func (injectedCommitFailure) Commit(context.Context, []Message) error {
+type injectedCommitFailure struct{ calls int }
+func (c *injectedCommitFailure) Commit(context.Context, []Message) error {
+    c.calls++
     return errors.New("injected failure after ClickHouse ACK and before Kafka offset commit")
 }
 
@@ -131,8 +132,16 @@ func TestKafkaCrashWindowsPreserveLogicalUsage(t *testing.T){
             // First consumer processes the record but never commits source
             // offsets. Acknowledge uncertainty and exit exactly as production
             // must do on failed commits or unknown ClickHouse results.
-            if err:=ProcessBatch(ctx,[]Message{source},sink,injectedCommitFailure{});err==nil{
+            attemptedCommit:=&injectedCommitFailure{}
+            err=ProcessBatch(ctx,[]Message{source},sink,attemptedCommit)
+            if err==nil {
                 first.Close();t.Fatal("expected failure before Kafka commit")
+            }
+            if scenario=="clickhouse_ack_lost" && attemptedCommit.calls!=0{
+                first.Close();t.Fatal("client mistakenly committed Kafka offset despite unknown ClickHouse ACK")
+            }
+            if scenario=="offset_commit_failed" && attemptedCommit.calls!=1{
+                first.Close();t.Fatal("the injected Kafka commit failure was not actually exercised")
             }
             if err:=first.Close();err!=nil{t.Fatal(err)}
             selector:=fmt.Sprintf("event_id=toUUID('%s')",e.EventID)
