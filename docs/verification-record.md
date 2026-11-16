@@ -15,12 +15,19 @@
 - ClickHouse query after ingestion: **1,000 raw rows** and **1,000 distinct event IDs**.
 - An earlier Docker smoke run failed before ingestion because Apache Kafka ran as uid 1000 against a root-owned KRaft data volume. The Compose fix uses a one-shot root volume initializer, then runs Kafka as its regular non-root user. ([original failing CI](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43867275593)).
 
+## M1 100,000-event acceptance
+
+- GitHub Actions matrix run: **PASS** for both **1,000** and **100,000** events ([integration run](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43868660650), branch commit `3f32148`).
+- For 1,000: Kafka ACK **1,000**; ClickHouse raw rows **1,000**; `uniqExact(event_id)` **1,000**.
+- For 100,000: Kafka ACK **100,000**; ClickHouse raw rows **100,000**; `uniqExact(event_id)` **100,000**.
+- Test uses fresh Docker volumes in separate matrix jobs with fixed seeds and a single Kafka broker. It validates nominal ingestion counts, **not** latency SLOs, durability under crashes, or billing idempotency.
+
 ## Still unverified
 
-- 100,000 events passing through Kafka and ClickHouse under measured throughput and latency.
+- Measured and reproducible throughput, P95/P99 end-to-end query latency, and saturation limits; the 100,000 event count is verified but those performance measures are not.
 - Crash after ClickHouse ACK/before Kafka commit, lost ClickHouse ACK, rebalance fencing, durable DLQ, and source Kafka broker faults.
 - PostgreSQL transactional ledger + Outbox lifecycle and authoritative billing deduplication.
 - Production Kafka 3-broker/replication-failure behavior; developer Compose has only one broker and RF=1.
 - Full end-to-end at-least-once correctness under all documented failure injections.
 
-**Interpretation:** M1 currently demonstrates a functional Docker-backed ingestion smoke test. It does not demonstrate end-to-end exactly-once delivery, zero loss, or financial accounting correctness.
+**Interpretation:** M1 demonstrates 1k and 100k event Docker-backed ingestion tests. It does not demonstrate end-to-end exactly-once delivery, zero loss, or financial accounting correctness.
