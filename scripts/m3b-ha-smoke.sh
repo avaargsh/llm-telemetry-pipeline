@@ -52,6 +52,9 @@ assert r["isr_after_failure"]==2 and r["isr_after_recovery"]==3,r
 assert r["insufficient_isr_probe_min_isr"]==3 and r["insufficient_isr_probe_isr"]==2,r
 assert r["broker_acknowledged_ids"]==35,r
 assert r["readback_records"]>=35 and r["all_acknowledged_verified"] is True,r
+assert r["quorum_loss_tested"] is True,r
+assert r["acknowledged_ids_verified_after_quorum_restore"] is True,r
+assert r["quorum_loss_producer_error"],r
 assert "replica" in r["rejected_error"].lower(),r
-print("PASS M3b-P1: 3-broker RF3, leader failover, ISR refusal, 35 ACKed ID readbacks")
+print("PASS M3b-P1: RF3, leader failover, ISR refusal, quorum-loss no-ACK, 35 ACKed ID readbacks")
 PY
