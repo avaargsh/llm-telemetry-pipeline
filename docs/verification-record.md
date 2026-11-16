@@ -39,6 +39,14 @@
 - Unit tests check DLQ ACK happens before source offset commit, and an ambiguous DLQ ACK prevents offset progress; invalid SHA-256 usage seal is also routed to DLQ.
 - This is poison-message isolation, not exact-once DLQ delivery or complete redrive governance.
 
+## M2c replay-safe analytics verification (2026-11-16)
+
+- **RED confirmed** before implementation: the new ClickHouse tests could not find `inference_events_dedup_v1` ([test-only RED run](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43875805853)).
+- **Real ClickHouse GREEN:** two sealed physical copies of the same Event ID remain **one** logical analytical record with the same token sum; injection of a second conflicting hash produces an integrity record and removes the event from trusted analytics; legacy hash-less rows are excluded and flagged ([M2c test run](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43876623583)).
+- A ClickHouse 25.8 DDL failure caused by reusing `payload_hash` as an aggregate alias was found and fixed by renaming the view output to `canonical_hash`.
+- The corrected Go writer preserves the SHA-256 event hash; M1 smoke now checks both the trusted logical event count and integrity exceptions.
+- This verifies correctness for tested event-level replay and corruption scenarios; it does not make the analytical view a billing ledger or prove performance SLOs.
+
 ## Still unverified
 
 - Measured and reproducible throughput, P95/P99 end-to-end query latency, and saturation limits; the 100,000 event count is verified but those performance measures are not.
