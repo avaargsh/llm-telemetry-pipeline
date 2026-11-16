@@ -16,8 +16,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - run: go mod download
-      - run: go mod verify
+      - run: go mod tidy
       - name: Docker-backed Kafka to ClickHouse ingestion
         run: bash scripts/m1-smoke.sh
         env:

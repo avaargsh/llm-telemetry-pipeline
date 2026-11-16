@@ -1,0 +1,47 @@
+name: m2-ledger-outbox-integration
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  postgres-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go mod tidy
+      - name: Start PostgreSQL schema
+        run: docker compose -f deployments/docker-compose.yml up -d postgres
+      - name: Wait until schema is available
+        run: |
+          for i in $(seq 1 60); do
+            if docker compose -f deployments/docker-compose.yml exec -T postgres \
+               psql -U telemetry -d telemetry -tAc 'SELECT count(*) FROM usage_ledger' >/dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          docker compose -f deployments/docker-compose.yml logs postgres
+          exit 1
+      - name: Transactional PostgreSQL integration tests
+        env:
+          TEST_POSTGRES_DSN: postgres://telemetry:localdev-only@localhost:15432/telemetry?sslmode=disable
+        run: go test -count=1 -v ./internal/ledger ./internal/outbox
+      - name: Stop isolated test environment
+        if: always()
+        run: docker compose -f deployments/docker-compose.yml down -v
+
+  postgres-kafka-clickhouse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go mod tidy
+      - name: Ledger persists when Kafka is down, then relay and analyze
+        run: bash scripts/m2-smoke.sh
