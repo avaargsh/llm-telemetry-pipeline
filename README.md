@@ -1,6 +1,6 @@
 # LLM Telemetry Pipeline
 
-> **Status:** M1, M2a (Ledger/Outbox), M2b (durable DLQ), M2c (replay-safe analysis) and M3a (Kafka replay fault tests) are merged and CI verified. M3c PostgreSQL ↔ ClickHouse reconciliation is merged and CI verified ([PR #8](https://github.com/avaargsh/llm-telemetry-pipeline/pull/8)). No exactly-once or absolute zero-loss claim.
+> **Status:** M1, M2a (Ledger/Outbox), M2b (durable DLQ), M2c (replay-safe analysis) and M3a (Kafka replay fault tests) are merged and CI verified. M3c PostgreSQL ↔ ClickHouse reconciliation is merged and CI verified ([PR #8](https://github.com/avaargsh/llm-telemetry-pipeline/pull/8)). M3b-P1 three-broker KRaft fault experiments are verified in [PR #12](https://github.com/avaargsh/llm-telemetry-pipeline/pull/12), pending merge. No exactly-once or absolute zero-loss claim.
 
 Go + Kafka (KRaft) + ClickHouse + PostgreSQL for reliable multi-tenant LLM inference usage telemetry.
 
@@ -50,8 +50,9 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 - **M2c merged:** signed event hash now persisted in ClickHouse; a query-level dedup view excludes unsealed/contradictory Event IDs and an integrity view reports them. This protects analysis counts, not billing.
 - **M3a merged:** real Kafka group restart after confirmed CH INSERT/failed source offset commit and lost ClickHouse ACK, with identical event replay verified against raw and trusted views.
 - **M3b-P0 merged:** the production ingest-worker now consumes per Kafka coordinator Generation; revoked assignments cannot commit offsets, and real 2-worker/2-partition replay was verified in Kafka/ClickHouse CI ([PR #11](https://github.com/avaargsh/llm-telemetry-pipeline/pull/11)).
+- **M3b-P1 in review:** isolated 3-broker KRaft RF=3/minISR=2; real leader failover, ISR rejection, combined-controller quorum loss and recovery of 35 Kafka-ACKed sealed Event IDs (PR #12).
 - **M3c merged:** read-only bounded PostgreSQL↔ClickHouse reconciliation, report statuses for replay, pending, grace, missing, orphan, hash conflict, mismatched tokens, and orphaned Outbox; machine-readable JSON with nonzero failure/incomplete exit codes.
-- Explicitly incomplete: DLQ redrive/retention governance, in-flight rebalance fencing, 3-broker Kafka HA, scheduled reconciliation and alerting, P95/P99 performance SLO, production authentication/secret management.
+- Explicitly incomplete: DLQ redrive/retention governance, resilience beyond tested rebalance and single-partition broker-failure envelopes, independent production Kafka controllers, scheduled reconciliation/alerting, P95/P99 performance SLO, production authentication/secret management.
 
 ## Docs
 
@@ -61,9 +62,10 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 - [M2c replay-safe analytics](docs/m2c-analytics.md)
 - [M3a Kafka replay failure experiments](docs/m3a-replay.md)
 - [M3b generation-fenced consumer and rebalance experiment](docs/m3b-rebalance.md)
+- [M3b-P1 three-broker RF3/minISR2 fault matrix](docs/m3b-ha.md)
 - [M3c Ledger/ClickHouse reconciliation](docs/m3c-reconciliation.md)
 - [Reliability contract](docs/reliability-contract.md)
 - [Verification evidence](docs/verification-record.md)
 - [Fault matrix](docs/fault-matrix.md)
 
-**Warning:** Docker Compose contains local development passwords, single-node Kafka and RF=1. Never deploy it as a production HA configuration.
+**Warning:** The default Compose is single-node Kafka RF=1. The separate three-broker Compose is a disposable combined-mode CI fault lab, not a production deployment pattern. Do not expose local dev passwords or plaintext listeners.

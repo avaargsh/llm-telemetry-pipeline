@@ -75,11 +75,20 @@
 - **Final PR #11 HEAD `d75da33`: all eight GitHub Actions workflows PASS.** [Real M3b rebalance run](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43888316428) published the machine-readable `m3b-rebalance-evidence` Artifact; [M1 1k/100k regression](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43888316326) and all M2/M3a/M3c regression workflows also passed. PR merged as `1e2b4ad`.
 - This is still **single-broker RF=1**, not a 3-broker HA proof. Replicated durability remains Issue #10.
 
+## M3b-P1 three-broker KRaft fault matrix (2026-11-16)
+
+- [PR #12](https://github.com/avaargsh/llm-telemetry-pipeline/pull/12) adds a separate three-node Kafka 4.1 combined-mode KRaft Compose profile (RF=3, permanent test-topic minISR=2, acks=all), leaving single-broker development Compose unchanged.
+- [Initial 3-broker run](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43891556301): **PASS**. Leader 2→3 after stopping Broker 2, ISR 3→2→3, Kafka returned protocol code **19 NotEnoughReplicas** with test-topic minISR temporarily set to 3; all **35 broker-ACKed sealed events** were reread with identical bytes.
+- [Extended quorum-loss run](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43892476284): **PASS**. Leader 3→1 under the single Broker failure. Later two combined Broker/Controller nodes were stopped; `acks=all` returned explicit NotEnoughReplicas, **not** a successful producer ACK. After restoring both nodes, all 35 previously ACKed event IDs passed the readback check again. Attached `m3b-kafka-ha-report` JSON Artifact.
+- All nine PR-head CI suites passed, including Go race/build, M1 1k/100k Kafka→ClickHouse, M2a/M2b/M2c, M3a/M3b-P0 and M3c regressions.
+- **Scope:** this proves RF3/minISR2 behavior under the stated single-partition, local-volume, combined-mode faults. It does not establish independent multi-AZ controllers, rack-awareness, durable storage surviving disk loss, exactly-once delivery or global zero loss.
+- An operation that returned a timeout/non-ACK can still be present in Kafka after a failure; it must not be counted as broker-ACKed or silently assumed absent.
+
 ## Still unverified
 
 - Measured and reproducible throughput, P95/P99 end-to-end query latency, and saturation limits; the 100,000 event count is verified but those performance measures are not.
-- Consumer rebalance fencing against coordinator/member race conditions beyond the tested 2-worker experiment; durable DLQ redrive and retention governance; and replicated multi-broker faults (M3a covers lost ClickHouse ACK and failed offset commit, M3b-P0 covers 2-worker revocation).
-- Production Kafka 3-broker/replication-failure behavior; developer Compose has only one broker and RF=1.
+- Consumer rebalance fencing beyond tested 2-worker conditions; durable DLQ redrive and retention governance; and broker/partition/rack fault combinations beyond the tested one-partition RF3 HA lab.
+- Production Kafka topology with dedicated controllers, cross-zone placement, authenticated listeners, real persistent storage and operational recovery. Developer Compose remains one Broker with RF=1.
 - Full end-to-end at-least-once correctness under all documented failure injections.
 
 **Interpretation:** M1 demonstrates 1k and 100k event Docker-backed ingestion tests. It does not demonstrate end-to-end exactly-once delivery, zero loss, or financial accounting correctness.

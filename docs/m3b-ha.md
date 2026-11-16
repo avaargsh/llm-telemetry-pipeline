@@ -1,6 +1,6 @@
 # M3b-P1 · Three-broker KRaft RF=3/minISR=2 fault experiments
 
-**Status: in review.** This is a disposable Docker fault lab, not a production HA deployment recipe.
+**Status: real Docker fault tests PASS; PR #12 in review.** This is a disposable Docker fault lab, not a production HA deployment recipe.
 
 ## Topology
 
@@ -25,13 +25,20 @@ The integration test uses actual partition metadata to verify replica count, ISR
 4. With both surviving brokers still online, temporarily change the **test Topic only** to `minISR=3`; a write must fail explicitly with Kafka's **NotEnoughReplicas** protocol error. This isolates ISR safety from controller quorum failure.
 5. Restore `minISR=2`; verify new ACKs. Restart the stopped broker; wait for ISR=3 and verify further ACKs.
 6. Replay the topic from offset zero. Verify **all 35 broker-ACKed Event IDs** exist exactly once with byte-identical sealed payloads. Rejected/unknown-ACK messages are not elevated to the acknowledged set.
-7. Export JSON with initial/failover leaders, ISR transitions, Kafka rejection, ACK counts and read-back proof.
+7. Keeping the current data partition leader online, stop the other **two combined Broker/Controller nodes**. After the remaining broker detects insufficient ISR / loss of controller quorum, the probe must receive **no Kafka ACK**. Its error can reflect insufficient replicas or transport uncertainty; do not claim that the unacknowledged record was definitely absent from the log.
+8. Restart both nodes, wait for ISR=3, and **recheck all 35 previously ACKed events**. Export JSON with initial/failover leaders, ISR transitions, Kafka rejection, quorum-loss probe and read-back proof.
 
 ## Important boundaries
 
 - Three *combined* controller+broker processes share failure domains in this lab; Kafka recommends dedicated controllers in critical production environments.
 - A single-partition, single-leader experiment does not prove all partitions, rack-awareness, zone failure, disk corruption or cross-region survivability.
-- `minISR=3` during step 4 is **test-only** and should not be mistaken for the permanent target. Stopping two controllers at once would lose controller quorum and confound the ISR-only probe.
+- `minISR=3` during step 4 is **test-only** and should not be mistaken for the permanent target. Stopping two controllers at once loses controller quorum and therefore is tested **separately** in step 7; its error cannot be used as evidence of ISR-only rejection.
 - Acknowledged records can still be lost under disasters outside tested persistence boundaries; no absolute zero-loss claim.
 - Kafka `acks=all` does not imply ClickHouse ingestion or PostgreSQL accounting has completed.
 - Replaying an unknown-ACK write may expose extra physical messages; treat these as unconfirmed until reconciled, never invent an acknowledgment.
+
+## Verified CI runs
+
+- [Single leader loss + minISR3 negative test](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43891556301): PASS; RF3, ISR 3→2→3, leader 2→3; 35/35 ACKed Event IDs reread.
+- [Separate two-controller loss + recovery](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43892476284): PASS; leader 3→1; an unacknowledged `acks=all` request failed with NotEnoughReplicas; recovery verified 35/35 previously acknowledged events. The `m3b-kafka-ha-report` Actions Artifact contains machine-readable results.
+- The test Topic is one partition; these experiments are **not** representative throughput benchmarks or HA availability SLO measurements.

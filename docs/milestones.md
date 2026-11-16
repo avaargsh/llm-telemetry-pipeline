@@ -9,7 +9,7 @@
 | M2c | Hash-consistent on-read dedup and integrity quarantine | **PASS**: real ClickHouse replay/conflict/legacy hash tests |
 | M3a | Kafka replay after lost ClickHouse ACK / failed offset commit | **PASS/MERGED**: real Kafka + ClickHouse tests and full regression CI |
 | M3b-P0 | Generation-fenced consumer, 2 workers and 2 partitions | **PASS/MERGED**: real revocation/replay and full 8-workflow CI matrix ([PR #11](https://github.com/avaargsh/llm-telemetry-pipeline/pull/11)) |
-| M3b-P1 | 3-broker KRaft failure envelope (RF=3/minISR=2) | **NOT VERIFIED**, Issue #10 |
+| M3b-P1 | Three combined KRaft brokers, RF3/minISR2, leader loss, ISR refusal and quorum loss | **PR #12 / verified in Docker CI**: 35 ACKed sealed events recovered; final PR review pending |
 | M3c | Ledger/ClickHouse read-only reconciler, event-level discrepancy matrix and JSON evidence | **PASS/MERGED**: PostgreSQL+ClickHouse Docker matrix, CLI exit-code assertion and published CI Artifact |
 | M2d | Authorized DLQ redrive, retention/ACLs, audit | **NOT IMPLEMENTED** |
 | M4 | Prometheus/Grafana, P95/P99, lag age, recovery throughput/latency SLO | **NOT IMPLEMENTED** |
