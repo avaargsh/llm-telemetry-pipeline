@@ -18,7 +18,12 @@ func testStore(t *testing.T)(*Store,*sql.DB){
     dsn:=os.Getenv("TEST_POSTGRES_DSN");if dsn==""{t.Skip("TEST_POSTGRES_DSN not set")}
     db,err:=sql.Open("pgx",dsn);if err!=nil{t.Fatal(err)}
     if err:=db.Ping();err!=nil{t.Fatal(err)}
-    t.Cleanup(func(){db.Close()})
+    cleanup:=func(){
+        db.Exec("DELETE FROM event_outbox WHERE event_id IN (SELECT event_id FROM usage_ledger WHERE request_id LIKE 'outbox-%')")
+        db.Exec("DELETE FROM usage_ledger WHERE request_id LIKE 'outbox-%'")
+    }
+    cleanup()
+    t.Cleanup(func(){cleanup();db.Close()})
     return &Store{DB:db},db
 }
 func seed(t *testing.T,db *sql.DB,logical string)event.UsageEvent{
