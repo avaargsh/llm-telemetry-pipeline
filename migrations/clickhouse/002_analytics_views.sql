@@ -16,7 +16,7 @@ SELECT
     any(completion_tokens) AS completion_tokens,
     any(latency_ms) AS latency_ms,
     any(status) AS status,
-    min(payload_hash) AS payload_hash,
+    min(payload_hash) AS canonical_hash,
     count() AS raw_copies
 FROM telemetry.inference_events_raw
 GROUP BY event_id
