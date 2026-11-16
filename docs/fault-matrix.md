@@ -4,7 +4,7 @@ The table distinguishes real Docker-backed fault experiments from simulations an
 
 | ID | Fault | Required evidence | Current status |
 |---|---|---|---|
-| F01 | ClickHouse stopped during Kafka batch processing | No commit after failed CH write; source group resumes from first uncommitted offset | **PASS / PR #13**: real stop on batch 2, committed offset 8, replayed offsets 8–23, trusted 24/24 |
+| F01 | ClickHouse stopped during Kafka batch processing | No commit after failed CH write; source group resumes from first uncommitted offset | **PASS/MERGED / PR #13**: real stop on batch 2, committed offset 8, replayed offsets 8–23, trusted 24/24 |
 | F02 | Crash between successful CH insert and offset commit | Replay accepted; no double count | **PARTIAL**: M3a injected a post-CH-ACK commit failure with real Kafka, but not a physical SIGKILL |
 | F03 | Kafka Leader/ISR/broker fault | RF3/minISR2 failure envelope, ACKed event recovery | **PASS / PR #12**: real 3-broker experiment, 35/35 ACKed Event IDs |
 | F04 | CH ACK dropped after successful insert | Duplicate raw rows, one logical record | **PASS / PR #7**: real CH plus test ACK-dropping proxy |

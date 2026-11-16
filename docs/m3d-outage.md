@@ -1,6 +1,6 @@
 # M3d: ClickHouse outage during Kafka batch + retention risk evidence
 
-**Status:** first real Docker integration PASS ([run 43896683695](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43896683695)); PR #13 final CI remains the merge gate.
+**Status:** PASS/MERGED as `0ef82c0` ([PR #13](https://github.com/avaargsh/llm-telemetry-pipeline/pull/13)); all 10 final CI workflows green.
 
 ## Contract
 
@@ -44,3 +44,7 @@ For financial statements always use the authoritative PostgreSQL `usage_ledger`,
 [Real CI run 43896683695](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43896683695) returned PASS: committed source offset remained 8 across a ClickHouse stop during batch 2; the restarted group resumed offset 8 and committed through offset 24. The final physical/raw and trusted event counts were both 24, with zero integrity conflicts. Its JSON Artifact records the broker-measured offset distance and oldest pending broker timestamp. Final CI also tests that warning has a nonzero time window rather than equality with a single instant.
 
 The retention threshold is a *risk-classification policy*, not proof of a broker deletion deadline. Kafka can delete full segments based on active retention settings and other mechanics; operational use should obtain topic-effective retention configuration and scrape Kafka coordinator offsets rather than trust user-supplied values.
+
+## Final verification
+
+[Final CI run 43897760439](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43897760439) confirmed the same Kafka source-commit fence at offset 8 and successful replay of the last 16 records. It published the `m3d-clickhouse-recovery-report` JSON artifact after the early-warning threshold fix. The 10-workflow regression matrix was green on PR head `44fdd02`; the change was merged as `0ef82c0`. No scheduled alert delivery or physical-kill scenario is claimed.
