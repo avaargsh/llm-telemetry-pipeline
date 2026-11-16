@@ -63,6 +63,8 @@
 - Sources enforce a maximum of 10,000 distinct Event IDs each, fail closed on truncated scans, and distinguish no-Outbox rows from merely unconfirmed Outbox publication. Grace periods are based on `published_at`, **not** on the inference event timestamp.
 - The report is read-only and does not automatically repair or charge. Independent DB snapshots, different event-time partitions, historical scans and complete operational authorization are not yet covered. Kafka HA is not proven.
 
+- Final PR #8 [CI evidence](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43884245869) passed and published the `m3c-reconciliation-report` downloadable JSON Artifact. The complete Go/M1/M2/M3a regression matrix passed on the same PR head; merged at commit `5bdf978`.
+
 ## Still unverified
 
 - Measured and reproducible throughput, P95/P99 end-to-end query latency, and saturation limits; the 100,000 event count is verified but those performance measures are not.
