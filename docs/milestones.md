@@ -1,18 +1,22 @@
 # Implementation Plan and Evidence Gates
 
-| Milestone | Deliverable | Evidence gate | Current status |
-|---|---|---|---|
-| Foundation | Event schema, payload hash, deterministic generator, offset tracker | Focused Go unit tests and race test | Implemented; tests validated locally |
-| M1 | Kafka producer/consumer → ClickHouse end-to-end, 100k events | CLI query + 100k count + consumer health + integration test logs | NOT IMPLEMENTED |
-| M2 | PostgreSQL ledger transaction + Outbox relay + DLQ | DB uniqueness test, relay restart, consumer replay test | SQL schema only |
-| M3 | Toxiproxy, broker/consumer/CH faults, reconciliation | Machine-checkable fault assertions and evidence files | NOT IMPLEMENTED |
-| M4 | Prometheus/Grafana + benchmarks and tuned batching | P95/P99, age-of-oldest, lag, rates, comparison reports | NOT IMPLEMENTED |
+| Stage | Delivered capabilities | Evidence status |
+|---|---|---|
+| Foundation | Immutable sealed usage event, deterministic generator, observed-offset tracking | Go unit + race tests passed |
+| M1 | Kafka producer and explicit-commit consumer → ClickHouse | **PASS**: real Docker 1,000 / 100,000 events; signed payload hash now included |
+| M2a | PostgreSQL atomic Ledger + Outbox and lease-fenced relay | **PASS**: concurrency/idempotency/rollback + Kafka-down recovery |
+| M2b | Durable DLQ with source identity and ACK-before-offset-commit | **PASS**: unit + real Kafka DLQ poison event |
+| M2c | Hash-consistent on-read dedup and integrity quarantine | **PASS**: real ClickHouse replay/conflict/legacy hash tests |
+| M3a | Kafka replay after lost ClickHouse ACK / failed offset commit | **PR #7**; initial real Docker run PASS, final CI review pending |
+| M3b | Consumer rebalance fencing; 3-broker Kafka failure envelope | **NOT VERIFIED** |
+| M3c | Ledger/ClickHouse reconciler and machine-checkable fault reports | **NOT IMPLEMENTED** |
+| M2d | Authorized DLQ redrive, retention/ACLs, audit | **NOT IMPLEMENTED** |
+| M4 | Prometheus/Grafana, P95/P99, lag age, recovery throughput/latency SLO | **NOT IMPLEMENTED** |
 
-M1 acceptance counts **events actually written and queried**, not simply NDJSON generated.
+## Ground rules
 
-M3 top three high-value cases:
-1. ClickHouse committed INSERT but worker missed ACK: replay and detect duplicates.
-2. Consumer crashed after insert but before Kafka commit: recover from last committed offset.
-3. Poison record sent to DLQ: if DLQ write fails, original partition progress MUST NOT commit.
-
-Numbers (throughput, success percentage, latency) are NOT measured until repeatable experiments exist.
+- Financial totals always come from PostgreSQL `usage_ledger`, not raw ClickHouse sums.
+- At-least-once plus event hash validation can establish repeatable analysis totals, **not** exactly-once delivery.
+- Do not count synthetic NDJSON output as a successful end-to-end ingestion test.
+- Kafka developer Compose has **one broker (RF=1)**. No replicated broker fault-tolerance claim.
+- Future claims need CI job/commit references, scenarios, and measured outcomes.

@@ -18,6 +18,10 @@ For **each** case, assert:
 - Recovery: ClickHouse has 2 physical rows, dedup view has 1 logical row and the original Token total, no false Hash conflict.
 - No production worker intentionally crashes; failures are injected only in the test.
 
+## Initial real test evidence
+
+[GitHub Actions run 43878130621](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43878130621) passed both real failure scenarios. In each, raw rows=2, trusted logical count=1, token count=227. The first test replayed Kafka offset 0, and the second offset 1. Follow-up tests enforce the exact commit-attempt boundary.
+
 ## Limitations
 
 - This proves a finite, scoped crash-window replay, not generalized zero-loss guarantees.

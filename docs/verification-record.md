@@ -47,6 +47,14 @@
 - The corrected Go writer preserves the SHA-256 event hash; M1 smoke now checks both the trusted logical event count and integrity exceptions.
 - This verifies correctness for tested event-level replay and corruption scenarios; it does not make the analytical view a billing ledger or prove performance SLOs.
 
+## M3a real Kafka/ClickHouse failure-window evidence (2026-11-16)
+
+- [GitHub Actions real Docker integration](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43878130621): **PASS** for both crash-window scenarios.
+- `offset_commit_failed`: first ClickHouse INSERT acknowledged, Kafka Committer deliberately returns failure. New reader in the **same consumer group** gets original offset `0`; raw ClickHouse rows `2`; trusted logical events `1`; deduped total `227` tokens.
+- `clickhouse_ack_lost`: test HTTP proxy gets the actual ClickHouse success response, then closes client socket before forwarding ACK. New reader in the same group gets original offset `1`; raw rows `2`; logical events `1`; deduped total `227` tokens.
+- Tightened follow-up test asserts that a missing ClickHouse ACK causes **zero attempts** to commit Kafka offsets, while failed-commit scenario must actually attempt a commit. Final CI status is tracked on PR #7.
+- These are scoped single-broker tests; do not infer cross-broker durability, unattended recovery, full workflow exactly-once semantics, or business-ledger reconciliation.
+
 ## Still unverified
 
 - Measured and reproducible throughput, P95/P99 end-to-end query latency, and saturation limits; the 100,000 event count is verified but those performance measures are not.

@@ -1,6 +1,6 @@
 # LLM Telemetry Pipeline
 
-> **Status:** M1, M2a (Ledger/Outbox), and M2b (durable DLQ) are merged. M2c replay-safe ClickHouse analytics is in [PR #6](https://github.com/avaargsh/llm-telemetry-pipeline/pull/6). No exactly-once or zero-loss claim.
+> **Status:** M1, M2a (Ledger/Outbox), M2b (durable DLQ) and M2c (replay-safe analysis) are merged and CI verified. M3a crash-window tests are under review in [PR #7](https://github.com/avaargsh/llm-telemetry-pipeline/pull/7). No end-to-end exactly-once or absolute zero-loss claim.
 
 Go + Kafka (KRaft) + ClickHouse + PostgreSQL for reliable multi-tenant LLM inference usage telemetry.
 
@@ -47,7 +47,8 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 - **M2a merged:** PostgreSQL Ledger + Outbox atomic insert; unique event/request idempotency and conflict detection; lease-fenced Outbox claiming, retry with persistent backoff, and mark-published only after Kafka ACK.
 - Real PostgreSQL integration tests and Docker smoke for persisted records across Kafka outage.
 - **M2b merged:** malformed or invalidly sealed events are Kafka-ACKed to `events.dlq.v1` before source offsets advance; unknown DLQ ACK is fail-closed.
-- **M2c in review:** signed event hash now persisted in ClickHouse; a query-level dedup view excludes unsealed/contradictory Event IDs and an integrity view reports them. This protects analysis counts, not billing.
+- **M2c merged:** signed event hash now persisted in ClickHouse; a query-level dedup view excludes unsealed/contradictory Event IDs and an integrity view reports them. This protects analysis counts, not billing.
+- **M3a in review:** real Kafka group restart after confirmed CH INSERT/failed source offset commit and lost ClickHouse ACK, with identical event replay verified against raw and trusted views.
 - Explicitly incomplete: DLQ redrive/retention policy, ACK-loss fault injection, recovery fencing under rebalances, 3-broker Kafka HA, reconciliation service, P95/P99 performance SLO, production authentication/secret management.
 
 ## Docs
@@ -56,6 +57,7 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 - [M2 ledger + Outbox](docs/m2-ledger-outbox.md)
 - [M2 durable DLQ](docs/m2-dlq.md)
 - [M2c replay-safe analytics](docs/m2c-analytics.md)
+- [M3a Kafka replay failure experiments](docs/m3a-replay.md)
 - [Reliability contract](docs/reliability-contract.md)
 - [Verification evidence](docs/verification-record.md)
 - [Fault matrix](docs/fault-matrix.md)
