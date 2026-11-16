@@ -1,0 +1,26 @@
+# Isolated CI alert-delivery proof. Do not expose these plaintext endpoints
+# beyond localhost or use this as a production monitoring topology.
+name: telemetry-alert-delivery-lab
+services:
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=1h'
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../prometheus/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:19090:9090"
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:19093:9093"
