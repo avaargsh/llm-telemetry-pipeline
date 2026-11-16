@@ -1,0 +1,34 @@
+name: m2c-analytics-integrity
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  analytics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go mod download
+      - run: go mod verify
+      - name: Start ClickHouse and run real analytical integrity tests
+        env:
+          TEST_CLICKHOUSE_HTTP: http://localhost:18123
+        run: |
+          set -euo pipefail
+          docker compose -f deployments/docker-compose.yml up -d clickhouse
+          for i in $(seq 1 90); do
+            if curl -fsS -u telemetry:localdev-only 'http://localhost:18123/?database=telemetry' --data-binary 'SELECT 1' >/dev/null 2>&1; then break; fi
+            if (( i == 90 )); then docker compose -f deployments/docker-compose.yml logs clickhouse; exit 1; fi
+            sleep 2
+          done
+          go test -count=1 -v ./internal/clickhouse -run 'TestAnalytics'
+      - name: Diagnostics and cleanup
+        if: always()
+        run: |
+          docker compose -f deployments/docker-compose.yml logs --tail=60 clickhouse
+          docker compose -f deployments/docker-compose.yml down -v
