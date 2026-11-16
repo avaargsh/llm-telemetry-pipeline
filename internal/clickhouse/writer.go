@@ -14,7 +14,7 @@ import (
     "github.com/avaargsh/llm-telemetry-pipeline/internal/event"
 )
 
-const insertSQL = "INSERT INTO inference_events_raw (event_id,event_time,tenant_id,project_id,request_id,model,prompt_tokens,completion_tokens,latency_ms,status) FORMAT JSONEachRow\n"
+const insertSQL = "INSERT INTO inference_events_raw (event_id,event_time,tenant_id,project_id,request_id,model,prompt_tokens,completion_tokens,latency_ms,status,payload_hash) FORMAT JSONEachRow\n"
 
 // HTTPWriter writes a complete validated batch synchronously. A timeout is an
 // UNKNOWN outcome: callers must replay rather than assume the insert failed.
@@ -37,6 +37,7 @@ type eventRow struct {
     CompletionTokens int64 `json:"completion_tokens"`
     LatencyMS int64 `json:"latency_ms"`
     Status string `json:"status"`
+    PayloadHash string `json:"payload_hash"`
 }
 
 func (w *HTTPWriter) Insert(ctx context.Context, events []event.UsageEvent) error {
@@ -61,7 +62,7 @@ func (w *HTTPWriter) Insert(ctx context.Context, events []event.UsageEvent) erro
             EventID:e.EventID, EventTime:e.Timestamp.UTC().Format("2006-01-02 15:04:05.000"),
             TenantID:e.TenantID, ProjectID:e.ProjectID, RequestID:e.RequestID,
             Model:e.Model, PromptTokens:e.PromptTokens, CompletionTokens:e.CompletionTokens,
-            LatencyMS:e.LatencyMS, Status:e.Status,
+            LatencyMS:e.LatencyMS, Status:e.Status, PayloadHash:e.PayloadHash,
         }
         if err := encoder.Encode(row); err != nil { return err }
     }
