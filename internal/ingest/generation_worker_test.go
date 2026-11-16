@@ -4,6 +4,8 @@ import (
     "context"
     "encoding/json"
     "errors"
+    "fmt"
+    "github.com/segmentio/kafka-go"
     "strings"
     "testing"
     "time"
@@ -74,3 +76,22 @@ func TestGenerationCommitterDoesNotAcknowledgeBrokerFailure(t *testing.T) {
 }
 type sinkFunc func(context.Context,[]event.UsageEvent)error
 func(f sinkFunc)Insert(ctx context.Context,es []event.UsageEvent)error{return f(ctx,es)}
+
+func TestRetryableGroupErrorsOnly(t *testing.T){
+    for _,e:=range []error{
+        kafka.GroupCoordinatorNotAvailable,
+        kafka.GroupLoadInProgress,
+        kafka.NotCoordinatorForGroup,
+        kafka.RebalanceInProgress,
+        kafka.IllegalGeneration,
+        fmt.Errorf("wrapped: %w",kafka.GroupCoordinatorNotAvailable),
+    }{
+        if !retryableGroupError(e){t.Errorf("expected a bounded coordinator retry for %v",e)}
+    }
+    for _,e:=range []error{
+        kafka.GroupAuthorizationFailed,kafka.InvalidGroupId,
+        kafka.TopicAuthorizationFailed,errors.New("permanent misconfiguration"),
+    }{
+        if retryableGroupError(e){t.Errorf("incorrectly retried a permanent error: %v",e)}
+    }
+}
