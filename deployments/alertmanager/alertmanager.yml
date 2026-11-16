@@ -1,0 +1,14 @@
+# TEST WEBHOOK only. Do not copy this receiver or disable auth in production.
+global:
+  resolve_timeout: 10s
+route:
+  receiver: local-proof-webhook
+  group_by: ["alertname"]
+  group_wait: 1s
+  group_interval: 3s
+  repeat_interval: 1h
+receivers:
+  - name: local-proof-webhook
+    webhook_configs:
+      - url: http://alert-webhook:19099/hook
+        send_resolved: true

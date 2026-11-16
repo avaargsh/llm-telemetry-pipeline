@@ -64,3 +64,10 @@ m3e-lag-smoke:
 # Disposable Prometheus/Alertmanager webhook-delivery fault lab.
 m4a-alert-smoke:
 	bash scripts/m4a-alert-delivery-smoke.sh
+
+.PHONY: m4-alert-e2e
+
+# Live Kafka → exporter → Prometheus → Alertmanager → disposable webhook;
+# separate from the synthetic metric M4a delivery-layer test above.
+m4-alert-e2e:
+	bash scripts/m4-alert-delivery-smoke.sh
