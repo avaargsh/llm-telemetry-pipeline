@@ -40,7 +40,7 @@ func main(){
     defer writer.Close()
     relay:=outbox.Relay{
         Repo:&outbox.Store{DB:db},Publisher:kafkaPublisher{writer},
-        WorkerID:*worker,Lease:60*time.Second,Limit:100,
+        WorkerID:*worker,Lease:120*time.Second,Limit:5,
     }
     for ctx.Err()==nil{
         count,err:=relay.RunOnce(ctx)
