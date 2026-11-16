@@ -1,6 +1,6 @@
 # M3b-P1 · Three-broker KRaft RF=3/minISR=2 fault experiments
 
-**Status: real Docker fault tests PASS; PR #12 in review.** This is a disposable Docker fault lab, not a production HA deployment recipe.
+**Status: real Docker fault tests PASS; PR #12 merged as `8651745`.** This is a disposable Docker fault lab, not a production HA deployment recipe.
 
 ## Topology
 
@@ -42,3 +42,7 @@ The integration test uses actual partition metadata to verify replica count, ISR
 - [Single leader loss + minISR3 negative test](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43891556301): PASS; RF3, ISR 3→2→3, leader 2→3; 35/35 ACKed Event IDs reread.
 - [Separate two-controller loss + recovery](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43892476284): PASS; leader 3→1; an unacknowledged `acks=all` request failed with NotEnoughReplicas; recovery verified 35/35 previously acknowledged events. The `m3b-kafka-ha-report` Actions Artifact contains machine-readable results.
 - The test Topic is one partition; these experiments are **not** representative throughput benchmarks or HA availability SLO measurements.
+
+## Merge gate
+
+All **nine** required GitHub Actions workflows passed on PR head `b6ed95d`, including the 100,000-event Kafka→ClickHouse regression. The [final three-broker HA run](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43893131251) uploaded `m3b-kafka-ha-report`; squash-merged as `8651745`.
