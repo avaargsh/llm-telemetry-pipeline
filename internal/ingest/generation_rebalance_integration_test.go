@@ -45,10 +45,11 @@ type commitEvent struct{
     worker string
     id string
 }
-func waitM3B(t *testing.T,ctx context.Context,events <-chan string,description string)string{
+func waitM3B(t *testing.T,ctx context.Context,events <-chan string,workerResults <-chan error,description string)string{
     t.Helper()
     select{
     case value:=<-events:return value
+    case err:=<-workerResults:t.Fatalf("worker exited before %s: %v",description,err);return ""
     case <-ctx.Done():t.Fatalf("timeout waiting for %s: %v",description,ctx.Err());return ""
     }
 }
@@ -114,7 +115,7 @@ func TestRealRebalanceRejectsStaleCommitsAndReplays(t *testing.T){
 
     seenInserted:=map[string]bool{}
     for len(seenInserted)<2{
-        id:=waitM3B(t,ctx,blocked.inserted,"both first-generation inserts")
+        id:=waitM3B(t,ctx,blocked.inserted,results,"both first-generation inserts")
         seenInserted[id]=true
     }
     // A has written both physical rows but has not committed either offset.
@@ -130,7 +131,7 @@ func TestRealRebalanceRejectsStaleCommitsAndReplays(t *testing.T){
     // handlers complete. Neither is allowed to commit from the stale gen.
     revoked:=map[string]bool{}
     for len(revoked)<2{
-        revoked[waitM3B(t,ctx,blocked.revoked,"generation revocation")]=true
+        revoked[waitM3B(t,ctx,blocked.revoked,results,"generation revocation")]=true
     }
     committed:=map[string]string{}
     bCommits:=0
