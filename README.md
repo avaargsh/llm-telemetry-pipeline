@@ -1,6 +1,6 @@
 # LLM Telemetry Pipeline
 
-> **Status:** M1, M2a (Ledger/Outbox), M2b (durable DLQ) and M2c (replay-safe analysis) are merged and CI verified. M3a crash-window tests are under review in [PR #7](https://github.com/avaargsh/llm-telemetry-pipeline/pull/7). No end-to-end exactly-once or absolute zero-loss claim.
+> **Status:** M1, M2a (Ledger/Outbox), M2b (durable DLQ), M2c (replay-safe analysis) and M3a (Kafka replay fault tests) are merged and CI verified. M3c PostgreSQL ↔ ClickHouse reconciliation is under review in [PR #8](https://github.com/avaargsh/llm-telemetry-pipeline/pull/8). No exactly-once or absolute zero-loss claim.
 
 Go + Kafka (KRaft) + ClickHouse + PostgreSQL for reliable multi-tenant LLM inference usage telemetry.
 
@@ -48,8 +48,9 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 - Real PostgreSQL integration tests and Docker smoke for persisted records across Kafka outage.
 - **M2b merged:** malformed or invalidly sealed events are Kafka-ACKed to `events.dlq.v1` before source offsets advance; unknown DLQ ACK is fail-closed.
 - **M2c merged:** signed event hash now persisted in ClickHouse; a query-level dedup view excludes unsealed/contradictory Event IDs and an integrity view reports them. This protects analysis counts, not billing.
-- **M3a in review:** real Kafka group restart after confirmed CH INSERT/failed source offset commit and lost ClickHouse ACK, with identical event replay verified against raw and trusted views.
-- Explicitly incomplete: DLQ redrive/retention policy, ACK-loss fault injection, recovery fencing under rebalances, 3-broker Kafka HA, reconciliation service, P95/P99 performance SLO, production authentication/secret management.
+- **M3a merged:** real Kafka group restart after confirmed CH INSERT/failed source offset commit and lost ClickHouse ACK, with identical event replay verified against raw and trusted views.
+- **M3c in review:** read-only bounded PostgreSQL↔ClickHouse reconciliation, report statuses for replay, pending, grace, missing, orphan, hash conflict, mismatched tokens, and orphaned Outbox; machine-readable JSON with nonzero failure/incomplete exit codes.
+- Explicitly incomplete: DLQ redrive/retention governance, in-flight rebalance fencing, 3-broker Kafka HA, scheduled reconciliation and alerting, P95/P99 performance SLO, production authentication/secret management.
 
 ## Docs
 
@@ -58,6 +59,7 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 - [M2 durable DLQ](docs/m2-dlq.md)
 - [M2c replay-safe analytics](docs/m2c-analytics.md)
 - [M3a Kafka replay failure experiments](docs/m3a-replay.md)
+- [M3c Ledger/ClickHouse reconciliation](docs/m3c-reconciliation.md)
 - [Reliability contract](docs/reliability-contract.md)
 - [Verification evidence](docs/verification-record.md)
 - [Fault matrix](docs/fault-matrix.md)

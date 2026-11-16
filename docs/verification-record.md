@@ -52,13 +52,21 @@
 - [GitHub Actions real Docker integration](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43878130621): **PASS** for both crash-window scenarios.
 - `offset_commit_failed`: first ClickHouse INSERT acknowledged, Kafka Committer deliberately returns failure. New reader in the **same consumer group** gets original offset `0`; raw ClickHouse rows `2`; trusted logical events `1`; deduped total `227` tokens.
 - `clickhouse_ack_lost`: test HTTP proxy gets the actual ClickHouse success response, then closes client socket before forwarding ACK. New reader in the same group gets original offset `1`; raw rows `2`; logical events `1`; deduped total `227` tokens.
-- Tightened follow-up test asserts that a missing ClickHouse ACK causes **zero attempts** to commit Kafka offsets, while failed-commit scenario must actually attempt a commit. Final CI status is tracked on PR #7.
+- Tightened follow-up test asserts that a missing ClickHouse ACK causes **zero attempts** to commit Kafka offsets, while failed-commit scenario must actually attempt a commit. Strict commit-attempt assertions and all M1/M2 regressions passed on PR #7; merged into master.
 - These are scoped single-broker tests; do not infer cross-broker durability, unattended recovery, full workflow exactly-once semantics, or business-ledger reconciliation.
+
+## M3c PostgreSQL ↔ ClickHouse reconciliation evidence (2026-11-16)
+
+- **RED:** test-only `reconcile_test.go` initially could not compile without the new bounded classification contracts; Go CI correctly failed before implementation ([RED job](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43882308777)).
+- **GREEN:** real PostgreSQL + ClickHouse Docker CI ([M3c integration](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43883539767)) passed. The authoritative ledger had **7** events, ClickHouse had **5** unique Event IDs, and eight status categories each had **1** event: matched, replayed, pending, in_flight, missing, orphan, conflict, mismatch.
+- In the same isolated data set the stand-alone CLI produced a machine-readable JSON report with `result=FAIL` and **exit code 2**. This is the expected negative test: detected discrepancies must never be reported as success.
+- Sources enforce a maximum of 10,000 distinct Event IDs each, fail closed on truncated scans, and distinguish no-Outbox rows from merely unconfirmed Outbox publication. Grace periods are based on `published_at`, **not** on the inference event timestamp.
+- The report is read-only and does not automatically repair or charge. Independent DB snapshots, different event-time partitions, historical scans and complete operational authorization are not yet covered. Kafka HA is not proven.
 
 ## Still unverified
 
 - Measured and reproducible throughput, P95/P99 end-to-end query latency, and saturation limits; the 100,000 event count is verified but those performance measures are not.
-- Crash after ClickHouse ACK/before Kafka commit, lost ClickHouse ACK, rebalance fencing, durable DLQ replay/redrive and retention governance, and source Kafka broker faults.
+- Consumer rebalance fencing during in-flight writes, durable DLQ redrive and retention governance, and source Kafka broker faults (M3a covers lost ClickHouse ACK and failed offset commit).
 - Production Kafka 3-broker/replication-failure behavior; developer Compose has only one broker and RF=1.
 - Full end-to-end at-least-once correctness under all documented failure injections.
 
