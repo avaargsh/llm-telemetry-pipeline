@@ -1,6 +1,6 @@
 # M3e — Live Kafka Lag, effective Topic retention, and ClickHouse backpressure
 
-**Status:** implemented in [PR #17](https://github.com/avaargsh/llm-telemetry-pipeline/pull/17). The final CI is the merge gate.
+**Status:** PASS/MERGED as `049a3d8` ([PR #17](https://github.com/avaargsh/llm-telemetry-pipeline/pull/17)); all 11 final CI workflows passed.
 
 ## Operator contract
 
@@ -73,3 +73,7 @@ docker run --rm -v "$PWD/deployments/prometheus:/rules:ro" \
 - The test-only HTTP gate is not a production traffic filter; no privileged failure-injection interface was added to the actual Worker.
 - The CI uses developer single-broker RF=1. It complements, but does not replace, the three-broker RF3/minISR2 experiments in PR #12.
 - Alertmanager routing, sustained throughput/P95/P99, multi-cluster collection, SASL/TLS, and independent production monitoring deploy remain future work.
+
+## Final CI evidence
+
+[PR #17 final M3e CI run](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43907781516) validated both real Kafka monitoring and gated ClickHouse recovery on the same code commit as [Go race/vet/build](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43907781298) and [M1 1k/100k](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43907781622). The Prometheus image's `promtool` reported **4 valid alert rules** and all firing/recovery unit cases PASS. Artifact `m3e-live-kafka-lag-evidence` contains separate actual source-offset and slow-write throughput reports. All **11** PR-head Actions workflows passed; change merged as `049a3d8`.
