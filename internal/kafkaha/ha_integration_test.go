@@ -152,6 +152,50 @@ func haWriteFailure(t *testing.T,ctx context.Context,seed string)string{
  return err.Error()
 }
 
+// haProbeQuorumLossAndRestore deliberately removes two of three combined
+// controller/broker processes while retaining the current data leader. The
+// producer must NOT receive an ACK. A timeout or transport error is treated
+// as an unknown append outcome, not as proof the event never reached storage.
+func haProbeQuorumLossAndRestore(t *testing.T,ctx context.Context,seed string,
+    leader int,previousACKs map[string][]byte)string{
+ t.Helper()
+ if leader<1||leader>3{t.Fatalf("invalid keeper broker %d",leader)}
+ var stopped []string
+ for id:=1;id<=3;id++{
+    if id!=leader {stopped=append(stopped,fmt.Sprintf("broker%d",id))}
+ }
+ for _,service:=range stopped{
+    haCompose(t,ctx,"stop",service)
+ }
+ // Leave enough time for the surviving broker to recognize that a quorum
+ // and all follower replicas are absent.
+ select{
+ case <-time.After(8*time.Second):
+ case <-ctx.Done():t.Fatal(ctx.Err())
+ }
+ e,err:=event.SyntheticUsageEvent(seed,1000,time.Date(2026,11,16,11,0,0,0,time.UTC))
+ if err!=nil{t.Fatal(err)}
+ raw,err:=json.Marshal(e);if err!=nil{t.Fatal(err)}
+ writer:=haNewWriter(1)
+ writeCtx,cancel:=context.WithTimeout(ctx,12*time.Second)
+ err=writer.WriteMessages(writeCtx,kafka.Message{Key:[]byte(e.EventID),Value:raw})
+ cancel()
+ _=writer.Close()
+ if err==nil{
+    t.Fatalf("producer ACKed while only one of three combined Kafka nodes was available")
+ }
+ failure:=err.Error()
+ t.Logf("no ACK during loss of 2/3 controller+broker nodes; unconfirmed append possible: %s",failure)
+ haCompose(t,ctx,append([]string{"start"},stopped...)...)
+ recovered:=haWaitPartition(t,ctx,3,-1)
+ if err:=RequireReplicaAndISR(recovered,3,3);err!=nil{t.Fatal(err)}
+ got:=haReadAcknowledged(t,ctx,previousACKs)
+ if got<len(previousACKs){
+    t.Fatalf("after quorum recovery visible=%d ACKed=%d",got,len(previousACKs))
+ }
+ return failure
+}
+
 func TestThreeBrokerLeaderFailoverAndISRFailClosed(t *testing.T){
  if os.Getenv("TEST_KAFKA_HA")!="1"{t.Skip("requires isolated three-broker Docker profile")}
  ctx,cancel:=context.WithTimeout(context.Background(),7*time.Minute)
