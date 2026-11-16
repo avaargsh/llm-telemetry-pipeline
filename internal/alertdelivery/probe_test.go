@@ -16,13 +16,20 @@ func TestProbeExportsOnlyCurrentMetricsAndCapturesWebhook(t *testing.T){
  if res.Code!=200||!strings.Contains(res.Body.String(),"llm_telemetry_lag_scrape_success 1"){
   t.Fatalf("healthy scrape not published: %s",res.Body.String())
  }
- p.SetMetrics(false,true,5)
+ p.SetMetrics(true,true,5)
  res=httptest.NewRecorder()
  p.Handler().ServeHTTP(res,httptest.NewRequest(http.MethodGet,"/metrics",nil))
- if !strings.Contains(res.Body.String(),"llm_telemetry_lag_scrape_success 0")||
+ if !strings.Contains(res.Body.String(),"llm_telemetry_lag_scrape_success 1")||
     !strings.Contains(res.Body.String(),`status="critical"} 1`)||
     !strings.Contains(res.Body.String(),"llm_telemetry_kafka_data_gap_offsets"){
   t.Fatalf("current severity and gap not exported: %s",res.Body.String())
+ }
+ p.SetMetrics(false,true,5)
+ recFail:=httptest.NewRecorder()
+ p.Handler().ServeHTTP(recFail,httptest.NewRequest(http.MethodGet,"/metrics",nil))
+ if !strings.Contains(recFail.Body.String(),"llm_telemetry_lag_scrape_success 0") ||
+    strings.Contains(recFail.Body.String(),`status="critical"} 1`) {
+  t.Fatalf("stale severity leaked on failed source poll: %s",recFail.Body.String())
  }
  payload:=`{"status":"firing","alerts":[{"status":"firing","labels":{"alertname":"KafkaRetentionCritical","severity":"critical"},"annotations":{"summary":"test"}}]}`
  rec:=httptest.NewRecorder()
