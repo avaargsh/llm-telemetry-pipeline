@@ -13,7 +13,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - run: go mod tidy
+      - run: go mod download
+      - run: go mod verify
       - name: Start PostgreSQL schema
         run: docker compose -f deployments/docker-compose.yml up -d postgres
       - name: Wait until schema is available
@@ -42,6 +43,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - run: go mod tidy
+      - run: go mod download
+      - run: go mod verify
       - name: Ledger persists when Kafka is down, then relay and analyze
         run: bash scripts/m2-smoke.sh

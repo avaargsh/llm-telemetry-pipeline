@@ -11,16 +11,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      # Lockfile is generated during initial M2 dependency adoption.
-      - run: go mod tidy
-      - name: Print resolved lockfile for review
-        run: |
-          echo '===M2_GO_MOD_START==='
-          cat go.mod
-          echo '===M2_GO_MOD_END==='
-          echo '===M2_GO_SUM_START==='
-          cat go.sum
-          echo '===M2_GO_SUM_END==='
+      - run: go mod download
+      - run: go mod verify
       - run: go vet ./...
       - run: go test -race ./...
       - run: go build ./...
