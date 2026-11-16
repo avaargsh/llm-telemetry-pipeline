@@ -81,3 +81,38 @@ tests:
       - eval_time: 3m
         alertname: LLMUsageKafkaLagMonitorUnavailable
         exp_alerts: []
+
+  - name: independent monitor instances do not mask or leak alerts
+    interval: 15s
+    input_series:
+      - series: 'telemetry_kafka_lag_monitor_up{job="llm-telemetry-lag-monitor",instance="A"}'
+        values: '1x12'
+      - series: 'telemetry_kafka_lag_monitor_up{job="llm-telemetry-lag-monitor",instance="B"}'
+        values: '0x12'
+      - series: 'telemetry_kafka_retention_warning{job="llm-telemetry-lag-monitor",instance="A",group="g",topic="t",partition="0"}'
+        values: '1x12'
+      - series: 'telemetry_kafka_retention_warning{job="llm-telemetry-lag-monitor",instance="B",group="g",topic="t",partition="1"}'
+        values: '1x12'
+    alert_rule_test:
+      - eval_time: 1m30s
+        alertname: LLMUsageKafkaRetentionEarlyWarning
+        exp_alerts:
+          - exp_labels:
+              group: g
+              topic: t
+              partition: "0"
+              job: llm-telemetry-lag-monitor
+              instance: A
+              severity: warning
+            exp_annotations:
+              summary: Kafka oldest pending record is approaching estimated retention window
+      - eval_time: 1m30s
+        alertname: LLMUsageKafkaLagMonitorUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: llm-telemetry-lag-monitor
+              instance: B
+              severity: critical
+            exp_annotations:
+              summary: Kafka telemetry lag data is unavailable or stale
+              description: The collector cannot verify Kafka offsets, timestamps or effective retention. Do not interpret absent observations as zero lag.
