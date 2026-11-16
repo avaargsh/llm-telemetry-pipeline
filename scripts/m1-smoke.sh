@@ -3,6 +3,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 compose=(docker compose -f deployments/docker-compose.yml)
 seed="ci-m1-${GITHUB_RUN_ID:-local}"
+count="${M1_COUNT:-1000}"
+if [[ ! "$count" =~ ^[0-9]+$ ]] || (( count < 1 || count > 100000 )); then echo "M1_COUNT must be 1..100000" >&2; exit 2; fi
+batch_size=100
+if (( count > 1000 )); then batch_size=1000; fi
 worker_pid=''
 cleanup() {
   local code=$?
@@ -43,19 +47,19 @@ for attempt in $(seq 1 90); do
   sleep 2
 done
 
-go run ./cmd/ingest-worker --batch-size 100 > /tmp/llm-telemetry-worker.log 2>&1 &
+go run ./cmd/ingest-worker --batch-size "$batch_size" > /tmp/llm-telemetry-worker.log 2>&1 &
 worker_pid=$!
-go run ./cmd/event-generator --count 1000 --seed "$seed" --start '2026-11-16T11:00:00Z' | go run ./cmd/event-producer --batch-size 100
+go run ./cmd/event-generator --count "$count" --seed "$seed" --start '2026-11-16T11:00:00Z' | go run ./cmd/event-producer --batch-size "$batch_size"
 
 for attempt in $(seq 1 90); do
   read -r raw_rows unique_events < <(clickhouse 'SELECT count(), uniqExact(event_id) FROM inference_events_raw FORMAT TabSeparatedRaw' | tr '\t' ' ')
   echo "M1 sample: raw_rows=${raw_rows:-0} unique_events=${unique_events:-0}"
-  if [[ "${unique_events:-0}" == 1000 ]]; then
-    if (( raw_rows < 1000 )); then echo 'Fewer raw rows than unique events' >&2; exit 1; fi
+  if [[ "${unique_events:-0}" == "$count" ]]; then
+    if (( raw_rows < count )); then echo 'Fewer raw rows than unique events' >&2; exit 1; fi
     echo "PASS: ${unique_events} unique usage events, ${raw_rows} raw rows"
     exit 0
   fi
   if ! kill -0 "$worker_pid" 2>/dev/null; then echo 'Consumer stopped prematurely' >&2; exit 1; fi
-  if [[ "$attempt" -eq 90 ]]; then echo '1000-event verification timed out' >&2; exit 1; fi
+  if [[ "$attempt" -eq 90 ]]; then echo "${count}-event verification timed out" >&2; exit 1; fi
   sleep 2
 done

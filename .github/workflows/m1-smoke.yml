@@ -6,6 +6,10 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        event_count: [1000, 100000]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -13,5 +17,7 @@ jobs:
           go-version-file: go.mod
           cache: false
       - run: go mod tidy
-      - name: Docker-backed 1000-event Kafka to ClickHouse smoke
+      - name: Docker-backed Kafka to ClickHouse ingestion
         run: bash scripts/m1-smoke.sh
+        env:
+          M1_COUNT: ${{ matrix.event_count }}
