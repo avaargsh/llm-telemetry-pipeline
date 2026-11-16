@@ -88,19 +88,23 @@ func Assess(s Snapshot)(Assessment,error){
  r.OldestUnconsumedTimestamp=&timestamp
  remaining:=timestamp.Add(s.Retention).Sub(s.Now)
  r.TimeToExpirySeconds=int64(remaining/time.Second)
+ // Leave an actionable warning interval before the critical window.
+ // Saturate at retention to avoid overflowing time.Duration for large margins.
+ warningThreshold:=s.Retention
+ if s.SafetyMargin<=s.Retention/2{warningThreshold=2*s.SafetyMargin}
  switch {
  case remaining<=0:
   r.Status=StatusExpired
   r.Reason="oldest pending record has reached or exceeded estimated retention age; data may already be at risk"
- case remaining<s.SafetyMargin:
+ case remaining<=s.SafetyMargin:
   r.Status=StatusCritical
-  r.Reason="estimated Kafka retention expiry is inside configured safety margin"
- case remaining==s.SafetyMargin:
+  r.Reason="estimated Kafka retention expiry is inside configured critical safety margin"
+ case remaining<=warningThreshold:
   r.Status=StatusWarning
-  r.Reason="estimated Kafka retention expiry has reached safety margin threshold"
+  r.Reason="estimated Kafka retention expiry has entered the early-warning window"
  default:
   r.Status=StatusHealthy
-  r.Reason="estimated Kafka retention expiry is beyond configured safety margin"
+  r.Reason="estimated Kafka retention expiry is beyond early-warning window"
  }
  return r,nil
 }
