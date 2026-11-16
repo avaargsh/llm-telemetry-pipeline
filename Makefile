@@ -58,3 +58,10 @@ lag-exporter:
 # Disposable Kafka/ClickHouse environment, built-in failure injection.
 m3e-lag-smoke:
 	bash scripts/m3e-lag-throttle-smoke.sh
+
+.PHONY: m4-alert-e2e
+
+# Real Kafka → Prometheus → Alertmanager → test webhook fault/recovery.
+# Disposable Docker volumes; not a production notification endpoint.
+m4-alert-e2e:
+	bash scripts/m4-alert-delivery-smoke.sh
