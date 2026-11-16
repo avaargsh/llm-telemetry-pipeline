@@ -16,7 +16,7 @@ infra-down:
 	docker compose -f deployments/docker-compose.yml down
 
 kafka-topics:
-	./scripts/bootstrap-topics.sh
+	bash scripts/bootstrap-topics.sh
 
 # M1 smoke path: run make infra-up && make kafka-topics first.
 publish:
