@@ -1,0 +1,63 @@
+# M4 isolated local observation profile. NOT production/on-call configuration.
+# Invoke together with the base developer compose:
+# docker compose -f deployments/docker-compose.yml -f deployments/docker-compose-observability.yml up -d
+services:
+  lag-exporter:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile.lag-exporter
+    command:
+      - --brokers=kafka:19092
+      - --group=m4-live-alert-ci
+      - --topic=m4.alert.e2e.v1
+      - --listen=:9108
+      - --interval=2s
+      - --timeout=5s
+      - --safety-margin=50s
+      - --max-partitions=2
+    depends_on:
+      kafka:
+        condition: service_started
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=1h
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+    ports:
+      - "127.0.0.1:19090:9090"
+    depends_on:
+      lag-exporter:
+        condition: service_started
+      alertmanager:
+        condition: service_started
+    restart: "no"
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "127.0.0.1:19093:9093"
+    depends_on:
+      alert-webhook:
+        condition: service_started
+    restart: "no"
+  alert-webhook:
+    image: python:3.13-alpine
+    command: ["python", "-u", "/app/m4-webhook-receiver.py"]
+    volumes:
+      - ../scripts/m4-webhook-receiver.py:/app/m4-webhook-receiver.py:ro
+    ports:
+      - "127.0.0.1:19099:19099"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
