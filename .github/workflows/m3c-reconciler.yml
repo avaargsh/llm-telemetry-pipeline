@@ -19,6 +19,14 @@ jobs:
           TEST_POSTGRES_DSN: postgres://telemetry:localdev-only@localhost:15432/telemetry?sslmode=disable
           TEST_CLICKHOUSE_HTTP: http://localhost:18123
         run: bash scripts/m3c-reconcile-smoke.sh
+      - name: Preserve machine-readable reconciliation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m3c-reconciliation-report
+          path: /tmp/m3c-report.json
+          if-no-files-found: ignore
+          retention-days: 14
       - name: Container diagnostics and cleanup
         if: always()
         run: |
