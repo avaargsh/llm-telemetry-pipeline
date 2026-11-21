@@ -100,5 +100,19 @@ class KafkaAuditTests(unittest.TestCase):
         self.assertEqual(audit.analyze(snap("before_fault"),invalid,"",True,"head")["verdict"],"INCOMPLETE")
 
 
+    def test_swapped_container_ips_with_updated_dns_still_mean_endpoint_drift(self):
+        before,after=snap("before_fault"),snap("after_success")
+        old2=before["nodes"]["broker2"]["container_ipv4"]
+        old3=before["nodes"]["broker3"]["container_ipv4"]
+        after["nodes"]["broker2"]["container_ipv4"]=old3
+        after["nodes"]["broker3"]["container_ipv4"]=old2
+        for node in after["nodes"].values():
+            node["dns_from_node"]["broker2"]=old3
+            node["dns_from_node"]["broker3"]=old2
+        result=audit.analyze(before,after,"normal Kafka log",True,"head")
+        self.assertEqual(result["dns_misroutes"],[])
+        self.assertEqual(set(result["ip_changed_nodes"]),{"broker2","broker3"})
+        self.assertEqual(result["verdict"],"CONTAINER_ENDPOINT_DRIFT_OBSERVED")
+
 if __name__=="__main__":
     unittest.main()

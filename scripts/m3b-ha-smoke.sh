@@ -120,5 +120,6 @@ assert a["complete_observations"] is True,a
 assert a["verdict"]=="NO_MISMATCH_OBSERVED",a
 assert a["observed_voter_target_mismatches"]==[],a
 assert a["identity_changes"]==[] and a["dns_misroutes"]==[],a
+assert a["ip_changed_nodes"]==[],"KRaft controller endpoints moved during stop/start"
 print("PASS M3b voter audit: retained node IDs/directory IDs and consistent Docker DNS; no sampled cross-target VOTE mismatch")
 PY

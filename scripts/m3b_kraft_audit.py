@@ -93,6 +93,8 @@ def analyze(baseline, later, logs, logs_observed, exact_head):
         verdict = "VOTER_TARGET_ID_MISMATCH_OBSERVED"
     elif identity_changes or dns_misroutes:
         verdict = "IDENTITY_OR_DNS_DRIFT_OBSERVED"
+    elif ip_changed:
+        verdict = "CONTAINER_ENDPOINT_DRIFT_OBSERVED"
     elif not complete:
         verdict = "INCOMPLETE"
     else:

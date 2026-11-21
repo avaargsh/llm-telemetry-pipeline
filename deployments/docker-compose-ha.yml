@@ -1,5 +1,8 @@
 # Deliberate disposable HA experiment; separate from developer single-broker Compose.
 # Three combined KRaft broker/controller nodes are for CI only.
+# FIXED LAB-ONLY IPv4 prevents broker2/broker3 Docker IP swaps after
+# stop/start, which were observed in the historical voter-key fault envelope.
+# Never copy this RFC1918 subnet / plaintext setup into production.
 name: telemetry-kafka-ha
 x-kafka-common: &kafka-common
   KAFKA_PROCESS_ROLES: "broker,controller"
@@ -30,6 +33,9 @@ services:
   broker1:
     image: apache/kafka:4.1.0
     hostname: broker1
+    networks:
+      kraft-stable:
+        ipv4_address: 172.29.241.11
     depends_on:
       ha-volume-init:
         condition: service_completed_successfully
@@ -44,6 +50,9 @@ services:
   broker2:
     image: apache/kafka:4.1.0
     hostname: broker2
+    networks:
+      kraft-stable:
+        ipv4_address: 172.29.241.12
     depends_on:
       ha-volume-init:
         condition: service_completed_successfully
@@ -58,6 +67,9 @@ services:
   broker3:
     image: apache/kafka:4.1.0
     hostname: broker3
+    networks:
+      kraft-stable:
+        ipv4_address: 172.29.241.13
     depends_on:
       ha-volume-init:
         condition: service_completed_successfully
@@ -73,3 +85,8 @@ volumes:
   broker1_data:
   broker2_data:
   broker3_data:
+networks:
+  kraft-stable:
+    ipam:
+      config:
+        - subnet: 172.29.241.0/24
