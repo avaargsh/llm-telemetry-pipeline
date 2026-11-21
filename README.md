@@ -74,6 +74,7 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 - [M4a synthetic metric delivery-layer tests](docs/m4a-alert-delivery.md)
 - [M4a+ actual Kafka lag to Alertmanager delivery](docs/m4-live-alerts.md)
 - [M5 performance baseline, reproducible SLO candidates, and profile comparator](docs/performance.md)
+- [M8 sustained fixed-RPS P95/P99 trial reports and fail-closed SLO evaluator](docs/m8-sustained-slo.md)
 - [Reliability contract](docs/reliability-contract.md)
 - [Verification evidence](docs/verification-record.md)
 - [Fault matrix](docs/fault-matrix.md)
