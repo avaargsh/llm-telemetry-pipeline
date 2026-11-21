@@ -163,8 +163,7 @@ func TestRealClickHouseAsyncACKBoundary(t *testing.T) {
         data, err := json.MarshalIndent(evidence, "", "  ")
         if err != nil { t.Fatal(err) }
         if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil { t.Fatal(err) }
-        if err := os.WriteFile(path, append(data, '
-'), 0644); err != nil { t.Fatal(err) }
+        if err := os.WriteFile(path, append(data, '\n'), 0644); err != nil { t.Fatal(err) }
     }
     t.Logf("PASS async ACK boundary: wait=1 visible at ACK; wait=0 visible at ACK=%t, eventually visible=true; no wait=0 Kafka ACK assumption",
         atACK == 1)
