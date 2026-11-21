@@ -158,17 +158,32 @@ def summarize_attempts(attempts, control, visible_at, count, target_rps, duratio
         raise ValueError("no observed failed/unknown ACK during primary outage")
     if (len(by_id) != count or len(visible_at) != count or rejected or observer_errors):
         raise ValueError("missing final ACK, trusted visibility or reliable observations")
+    first_confirmation = {}
+    for attempt in sorted(successful, key=lambda item: item["ended"]):
+        first_confirmation.setdefault(attempt["event_id"], attempt["ended"])
     phase_metrics = {}
     for phase in ("before", "fault", "recovery"):
         phase_initial = [a for a in initial if phase_of(a["started"], control) == phase]
         phase_success = [a for a in phase_initial if a["classification"].startswith("CONFIRMED")]
         latencies = [(a["ended"] - a["started"]) * 1000 for a in phase_success]
+        # Visibility and final confirmation include failed attempts and retries.
+        # Only HTTP ACK latency uses successful individual attempts.
+        visible_latencies_by_phase = [
+            max(0, (visible_at[a["event_id"]] - a["started"]) * 1000)
+            for a in phase_initial]
+        confirmation_latencies = [
+            max(0, (first_confirmation[a["event_id"]] - a["started"]) * 1000)
+            for a in phase_initial]
         phase_metrics[phase] = {
             "initial_requests": len(phase_initial),
             "initial_unknown": sum(a["classification"] == "UNKNOWN" for a in phase_initial),
             "confirmed_acks": len(phase_success),
             "ack_p95_ms": percentile_or_none(latencies, 0.95),
             "ack_p99_ms": percentile_or_none(latencies, 0.99),
+            "visible_p95_ms": percentile_or_none(visible_latencies_by_phase, 0.95),
+            "visible_p99_ms": percentile_or_none(visible_latencies_by_phase, 0.99),
+            "final_confirmation_p95_ms": percentile_or_none(confirmation_latencies, 0.95),
+            "final_confirmation_p99_ms": percentile_or_none(confirmation_latencies, 0.99),
         }
     first_request_start_by_id = {a["event_id"]: a["started"] for a in initial}
     visible_latencies = [
@@ -179,6 +194,11 @@ def summarize_attempts(attempts, control, visible_at, count, target_rps, duratio
                                 if a["ended"] >= control["fault_injected"])
     first_after_routing_ack = min(a["ended"] for a in after)
     last_before_fault_ack = max(a["ended"] for a in before)
+    all_ack_times = sorted(a["ended"] for a in successful)
+    max_ack_gap_s = max((right - left for left, right in
+                         zip(all_ack_times, all_ack_times[1:])), default=0.0)
+    last_confirmed_ack = all_ack_times[-1]
+    last_first_visibility = max(visible_at.values())
     return {
         "schema_version": 1, "head_sha": os.getenv("M9_EXACT_HEAD", ""),
         "mode": "manual_pg17_remote_apply_fault_aware",
@@ -199,17 +219,100 @@ def summarize_attempts(attempts, control, visible_at, count, target_rps, duratio
         "steady_schedule_lag_p99_ms": percentile_or_none(lag, 0.99),
         "trusted_visibility_p95_ms": percentile_or_none(visible_latencies, 0.95),
         "trusted_visibility_p99_ms": percentile_or_none(visible_latencies, 0.99),
-        "fault_to_first_ack_s": round(first_after_fault_ack - control["fault_injected"], 3),
+        "first_inflight_ack_after_fault_s": round(
+            first_after_fault_ack - control["fault_injected"], 3),
         "promoted_to_first_confirmed_ack_s": round(
             first_after_routing_ack - control["promoted"], 3),
-        "observed_successful_ack_gap_s": round(
+        "fault_boundary_ack_gap_s": round(
             first_after_fault_ack - last_before_fault_ack, 3),
+        "observed_write_interruption_bracket_s": round(
+            first_after_routing_ack - last_before_fault_ack, 3),
+        "maximum_observed_inter_ack_gap_s": round(max_ack_gap_s, 3),
+        "post_last_ack_trusted_visibility_drain_s": round(
+            max(0, last_first_visibility - last_confirmed_ack), 3),
         "promotion_duration_s": round(control["promoted"] - control["fault_injected"], 3),
         "routing_recovery_duration_s": round(control["api_ready"] - control["fault_injected"], 3),
         "visibility_polling_note": "First observed in trusted CH projection, polling uncertainty ~0.5s",
+        "ack_gap_note": "Fault-boundary ACK may be an in-flight success; the bracket and maximum sampled gap are observations, not RTO guarantees",
         "production_rpo_rto": "NOT_ESTABLISHED",
         "fault_timeline": control,
     }
+
+
+
+def write_raw_samples(attempts, visible_at, control, epoch, output):
+    """Redacted per-attempt/per-event raw receipts for independent percentile review."""
+    root = pathlib.Path(output).parent
+    root.mkdir(parents=True, exist_ok=True)
+    with (root / "attempts.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(("event_index", "retry_round", "phase", "status", "classification",
+                         "scheduled_offset_ms", "start_offset_ms", "end_offset_ms"))
+        for a in sorted(attempts, key=lambda item: (item["index"], item["retry_round"])):
+            writer.writerow((
+                a["index"], a["retry_round"], phase_of(a["started"], control),
+                a["status"], a["classification"],
+                f'{(a["scheduled"] - epoch) * 1000:.6f}',
+                f'{(a["started"] - epoch) * 1000:.6f}',
+                f'{(a["ended"] - epoch) * 1000:.6f}',
+            ))
+    firsts = {a["index"]: a for a in attempts if a["retry_round"] == 0}
+    with (root / "visibility.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(("event_index", "phase", "first_start_offset_ms",
+                         "first_seen_offset_ms", "visibility_latency_ms"))
+        for index in sorted(firsts):
+            a = firsts[index]
+            seen = visible_at.get(a["event_id"])
+            if seen is None:
+                raise ValueError("cannot archive incomplete ClickHouse visibility")
+            writer.writerow((index, phase_of(a["started"], control),
+                             f'{(a["started"] - epoch) * 1000:.6f}',
+                             f'{(seen - epoch) * 1000:.6f}',
+                             f'{max(0, seen - a["started"]) * 1000:.6f}'))
+
+
+def validate_raw_samples(root, summary, count):
+    """Independent raw receipt consistency gate, without storing stable IDs."""
+    with (pathlib.Path(root) / "attempts.csv").open(newline="", encoding="utf-8") as handle:
+        attempts = list(csv.DictReader(handle))
+    with (pathlib.Path(root) / "visibility.csv").open(newline="", encoding="utf-8") as handle:
+        visibility = list(csv.DictReader(handle))
+    if len(attempts) != summary["total_attempts"] or len(visibility) != count:
+        raise ValueError("raw evidence cardinality disagrees with report")
+    try:
+        indices = [int(x["event_index"]) for x in visibility]
+        initial_indices = [int(x["event_index"]) for x in attempts
+                           if int(x["retry_round"]) == 0]
+        statuses = {}
+        for a in attempts:
+            index = int(a["event_index"])
+            if index < 0 or index >= count or a["classification"] != classify_status(int(a["status"])):
+                raise ValueError("raw attempt classification/index tampered")
+            statuses[a["status"]] = statuses.get(a["status"], 0) + 1
+        if (len(set(indices)) != count or set(indices) != set(range(count)) or
+                sorted(initial_indices) != list(range(count)) or
+                statuses != summary["http_attempt_status_counts"]):
+            raise ValueError("raw request/visibility identities or statuses incomplete")
+        values = [float(x["visibility_latency_ms"]) for x in visibility]
+        if abs(percentile(values, 0.99) - summary["trusted_visibility_p99_ms"]) > 0.002:
+            raise ValueError("reported ClickHouse P99 differs from raw samples")
+        for phase, metrics in summary["window_metrics"].items():
+            phase_values = [float(x["visibility_latency_ms"]) for x in visibility
+                            if x["phase"] == phase]
+            phase_attempts = [a for a in attempts if a["phase"] == phase
+                              and int(a["retry_round"]) == 0]
+            if (len(phase_attempts) != metrics["initial_requests"] or
+                    len(phase_values) != metrics["initial_requests"]):
+                raise ValueError("phase-specific evidence incomplete")
+            observed = percentile_or_none(phase_values, 0.99)
+            reported = metrics["visible_p99_ms"]
+            if observed is None or reported is None or abs(observed - reported) > 0.002:
+                raise ValueError("phase ClickHouse P99 differs from raw samples")
+    except (TypeError, KeyError) as exc:
+        raise ValueError("invalid raw receipt schema") from exc
+    return {"raw_attempt_rows": len(attempts), "raw_visibility_rows": len(visibility),
+            "independent_p99_recalculated": True}
 
 
 def run_load(args):
@@ -283,6 +386,7 @@ def run_load(args):
                                  args.target_rps, args.duration_seconds, epoch,
                                  len(observer_errors))
     pathlib.Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+    write_raw_samples(attempts, visible_at, control, epoch, args.output)
     pathlib.Path(args.output).write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     print(json.dumps({"client_correctness": summary["client_correctness"],
                       "finally_confirmed_ids": summary["finally_confirmed_ids"],
@@ -303,6 +407,7 @@ def verify_final(args):
     proof = build_reconciliation(expected, records, control,
                                  args.ledger_count, args.outbox_count)
     summary = json.loads(pathlib.Path(args.client_report).read_text(encoding="utf-8"))
+    raw_proof = validate_raw_samples(pathlib.Path(args.client_report).parent, summary, len(expected))
     if (summary.get("client_correctness") != "PASS_CLIENT_OBSERVED" or
             summary.get("submitted") != len(expected) or
             summary.get("finally_confirmed_ids") != len(expected) or
@@ -324,6 +429,7 @@ def verify_final(args):
         "real_sigkill_and_manual_promotion": True,
         "held_uncommitted_ledger_and_outbox_rows": 0,
         "reconciliation": proof,
+        "raw_samples": raw_proof,
         "client": summary,
         "evidence_limits": [
             "No automatic leader election, network-partition fencing or client failover",
