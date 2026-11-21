@@ -48,6 +48,14 @@ jobs:
           path: /tmp/m3b-kafka-ha-report.json
           if-no-files-found: warn
           retention-days: 14
+      - name: Preserve per-trial exact-head quorum vs ISR readiness timing (including failed trials)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m3b-recovery-timeline-trial-${{ matrix.trial }}
+          path: /tmp/m3b-kraft-recovery-timeline.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Preserve before/failure/success identity, DNS and quorum snapshots
         if: always()
         uses: actions/upload-artifact@v4
