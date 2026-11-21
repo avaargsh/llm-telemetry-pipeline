@@ -1,0 +1,34 @@
+name: m8-sustained-p95-p99-slo
+on:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  real-steady-load-profile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 28
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go mod download
+      - run: go mod verify
+      - name: Pacing and SLO fail-closed deterministic unit tests
+        run: python3 -m unittest discover -s scripts -p 'test_m8_sustained.py' -v
+      - name: Run three real 45-second open-loop load profiles
+        env:
+          M8_TARGET_RPS: "25"
+          M8_DURATION_SECONDS: "45"
+          M8_COUNT: "1125"
+          M8_RELAY_BATCH_TIMEOUT: "5ms"
+          M8_OUTPUT_DIR: artifacts/m8-sustained
+        run: bash scripts/m8-sustained-smoke.sh
+      - name: Archive per-trial P95/P99 and PG/Kafka/ClickHouse host evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m8-sustained-p95-p99-evidence
+          path: artifacts/m8-sustained/
+          if-no-files-found: error
+          retention-days: 14

@@ -10,6 +10,9 @@ batch="${M5_BATCH_SIZE:-32}"
 relay_timeout="${M5_RELAY_BATCH_TIMEOUT:-100ms}"
 relay_limit="${M5_RELAY_CLAIM_LIMIT:-5}"
 timeout="${M5_VISIBILITY_TIMEOUT:-90}"
+rate="${M5_TARGET_RPS:-}"
+duration="${M5_DURATION_SECONDS:-}"
+stats_output="${M5_DOCKER_STATS_OUTPUT:-}"
 output="${M5_OUTPUT:-artifacts/m5-performance.json}"
 if [[ "$output" != /* ]]; then output="$PWD/$output"; fi
 if ! [[ "$count" =~ ^[1-9][0-9]*$ && "$concurrency" =~ ^[1-9][0-9]*$ && "$partitions" =~ ^[1-9][0-9]*$ && "$batch" =~ ^[1-9][0-9]*$ ]]; then
@@ -22,11 +25,11 @@ fi
 export COMPOSE_PROJECT_NAME="llmtelemetry-m5-${GITHUB_RUN_ID:-local}-$$"
 compose=(docker compose -f deployments/docker-compose.yml)
 tmp="$(mktemp -d)"
-api_pid='' ; relay_pid='' ; worker_pid=''
+api_pid='' ; relay_pid='' ; worker_pid='' ; stats_pid=''
 cleanup() {
   code=$?
   trap - EXIT
-  for pid in "$api_pid" "$relay_pid" "$worker_pid"; do
+  for pid in "$stats_pid" "$api_pid" "$relay_pid" "$worker_pid"; do
     if [[ -n "$pid" ]]; then
       kill "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
@@ -108,6 +111,34 @@ for i in $(seq 1 40); do
 done
 
 mkdir -p "$(dirname "$output")"
+paced_args=()
+if [[ -n "$rate" || -n "$duration" ]]; then
+  if [[ -z "$rate" || -z "$duration" ]]; then
+    echo "steady load requires both M5_TARGET_RPS and M5_DURATION_SECONDS" >&2
+    exit 2
+  fi
+  paced_args=(--target-rps "$rate" --duration-seconds "$duration")
+fi
+if [[ -n "$stats_output" ]]; then
+  if [[ "$stats_output" != /* ]];then stats_output="$PWD/$stats_output";fi
+  mkdir -p "$(dirname "$stats_output")"
+  (
+    printf 'sampled_at_utc,container,cpu_percent,mem_usage\n'
+    containers=()
+    for name in postgres kafka clickhouse;do
+      cid=$("${compose[@]}" ps -q "$name")
+      [[ -z "$cid" ]] || containers+=("$cid")
+    done
+    while kill -0 "$api_pid" 2>/dev/null;do
+      sampled="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      if (( ${#containers[@]} > 0 ));then
+        docker stats --no-stream --format "${sampled},{{.Name}},{{.CPUPerc}},{{.MemUsage}}" "${containers[@]}" || true
+      fi
+      sleep 5
+    done
+  ) >"$stats_output" 2>/dev/null &
+  stats_pid=$!
+fi
 slo_args=()
 [[ -z "${M5_MAX_ACK_P95_MS:-}" ]] || slo_args+=(--max-ack-p95-ms "$M5_MAX_ACK_P95_MS")
 [[ -z "${M5_MAX_VISIBLE_P95_MS:-}" ]] || slo_args+=(--max-visible-p95-ms "$M5_MAX_VISIBLE_P95_MS")
@@ -118,6 +149,7 @@ python3 scripts/m5_benchmark.py \
   --concurrency "$concurrency" --partitions "$partitions" \
   --batch-size "$batch" --visibility-timeout "$timeout" \
   --relay-claim-limit "$relay_limit" --relay-batch-timeout "$relay_timeout" \
+  "${paced_args[@]}" \
   --pid "api:$api_pid" --pid "relay:$relay_pid" --pid "consumer:$worker_pid" \
   "${slo_args[@]}" --output "$output"
 echo "M5 correctness report: $output"

@@ -41,6 +41,21 @@ def classify(report, thresholds):
     return "PASS_CORRECTNESS", "PASS"
 
 
+
+def pacing_plan(count, target_rps, duration_seconds):
+    """Deterministic monotonic-clock offsets; no coordinated-omission shortcut."""
+    if (isinstance(count, bool) or not isinstance(count, int) or
+        not isinstance(target_rps, (int, float)) or isinstance(target_rps, bool) or
+        not isinstance(duration_seconds, (int, float)) or isinstance(duration_seconds, bool) or
+        not math.isfinite(target_rps) or not math.isfinite(duration_seconds) or
+        target_rps <= 0 or target_rps > 2000 or
+        not 30 <= duration_seconds <= 1200 or
+        not 1000 <= count <= 10000):
+        raise ValueError("sustained profiles require 1000..10000 samples, 30..1200s, positive bounded rate")
+    if count != math.ceil(target_rps * duration_seconds):
+        raise ValueError("number of generated sealed events must equal ceil(target RPS × duration)")
+    return [i / target_rps for i in range(count)]
+
 def build_scopes(credentials):
     if not isinstance(credentials, list) or not credentials:
         raise ValueError("credential list is required")
@@ -111,12 +126,13 @@ def query_visible(endpoint, user, password, query):
         return set(response.read(2 << 20).decode("utf-8").splitlines())
 
 
-def send_one(api_url, event, token, started, mutex):
+def send_one(api_url, event, token, started, mutex, scheduled=None):
     event_id = event["event_id"]
     data = json.dumps(event, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(api_url, data=data, method="POST",
                                      headers={"Content-Type": "application/json", "Authorization": "Bearer " + token})
     start = time.monotonic()
+    lag_ms = max(0.0, (start - scheduled) * 1000) if scheduled is not None else None
     with mutex:
         started[event_id] = start
     status = 0
@@ -129,7 +145,7 @@ def send_one(api_url, event, token, started, mutex):
         exc.close()
     except (OSError, TimeoutError):
         status = 0
-    return event_id, status, start, time.monotonic()
+    return event_id, status, start, time.monotonic(), lag_ms
 
 
 def read_process_stats(pid):
@@ -170,6 +186,8 @@ def main():
     ap.add_argument("--clickhouse", default="http://127.0.0.1:18123")
     ap.add_argument("--clickhouse-user", default="telemetry")
     ap.add_argument("--concurrency", type=int, default=4)
+    ap.add_argument("--target-rps", type=float, help="steady open-loop offered load; requires --duration-seconds")
+    ap.add_argument("--duration-seconds", type=float, help="steady offered-load interval; min 30s")
     ap.add_argument("--partitions", type=int, required=True)
     ap.add_argument("--batch-size", type=int, required=True)
     ap.add_argument("--relay-claim-limit", type=int, required=True)
@@ -193,6 +211,13 @@ def main():
     creds = json.loads(os.environ.get("USAGE_INGEST_CREDENTIALS_JSON", "[]"))
     scopes = build_scopes(creds)
     events = load_events(args.events_file, args.seed)
+    if (args.target_rps is None) != (args.duration_seconds is None):
+        ap.error("--target-rps and --duration-seconds must both be set")
+    try:
+        planned_offsets = (pacing_plan(len(events), args.target_rps, args.duration_seconds)
+                           if args.target_rps is not None else None)
+    except ValueError as exc:
+        ap.error(str(exc))
     for item in events:
         token_for(item, scopes)
     start_ms = min(observed_timestamp(e["timestamp"]) for e in events)
@@ -246,8 +271,19 @@ def main():
     monitor.start()
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.concurrency) as pool:
-            futures = [pool.submit(send_one, args.api_url, event, token_for(event, scopes), started, mutex)
-                       for event in events]
+            if planned_offsets is None:
+                futures = [pool.submit(send_one, args.api_url, event, token_for(event, scopes), started, mutex)
+                           for event in events]
+            else:
+                futures = []
+                epoch = time.monotonic()
+                for event, offset in zip(events, planned_offsets):
+                    scheduled = epoch + offset
+                    remaining = scheduled - time.monotonic()
+                    if remaining > 0:
+                        time.sleep(remaining)
+                    futures.append(pool.submit(send_one, args.api_url, event,
+                                               token_for(event, scopes), started, mutex, scheduled))
             responses = [future.result() for future in concurrent.futures.as_completed(futures)]
         last_ack = max(r[3] for r in responses)
         deadline[0] = time.monotonic() + args.visibility_timeout
@@ -291,6 +327,14 @@ def main():
         "drain_seconds": round(drain_s, 3),
         "visibility_poll_seconds": args.poll_seconds,
         "visibility_query_errors": observed_errors,
+        "steady_target_rps": args.target_rps,
+        "steady_duration_seconds": args.duration_seconds,
+        "steady_observed_send_duration_seconds": (round(max(r[2] for r in responses) - min(r[2] for r in responses), 3)
+                                                  if planned_offsets is not None else None),
+        "steady_schedule_lag_p95_ms": (round(percentile([r[4] for r in responses], .95), 2)
+                                     if planned_offsets is not None else None),
+        "steady_schedule_lag_p99_ms": (round(percentile([r[4] for r in responses], .99), 2)
+                                     if planned_offsets is not None else None),
         "resources": resource_metrics,
         "candidate_slo": thresholds,
     }
