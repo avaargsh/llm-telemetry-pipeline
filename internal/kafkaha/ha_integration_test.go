@@ -16,7 +16,7 @@ import (
 )
 
 const haTopic="m3b.ha.critical.v1"
-var haBrokers=[]string{"localhost:39092","localhost:39093","localhost:39094"}
+var haBrokers=[]string{"127.0.0.1:39092","127.0.0.1:39093","127.0.0.1:39094"}
 
 func haCompose(t *testing.T,ctx context.Context,args ...string)string{
  t.Helper()
@@ -81,18 +81,19 @@ func haWaitPartition(t *testing.T,ctx context.Context,expectedISR int,oldLeader 
     }
  }
 }
-func haNewWriter(attempts int)*kafka.Writer{
+func haNewWriter(attempts int,bootstrap ...string)*kafka.Writer{
+ if len(bootstrap)==0{bootstrap=haBrokers}
  return &kafka.Writer{
-    Addr:kafka.TCP(haBrokers...),Topic:haTopic,
+    Addr:kafka.TCP(bootstrap...),Topic:haTopic,
     Balancer:&kafka.Hash{},RequiredAcks:kafka.RequireAll,
     Async:false,AllowAutoTopicCreation:false,
     BatchSize:1,BatchTimeout:10*time.Millisecond,
     MaxAttempts:attempts,WriteTimeout:5*time.Second,ReadTimeout:5*time.Second,
  }
 }
-func haPublish(t *testing.T,ctx context.Context,seed string,start,count int,ack map[string][]byte){
+func haPublish(t *testing.T,ctx context.Context,seed string,start,count int,ack map[string][]byte,bootstrap ...string){
  t.Helper()
- writer:=haNewWriter(10)
+ writer:=haNewWriter(10,bootstrap...)
  defer writer.Close()
  for n:=start;n<start+count;n++{
     e,err:=event.SyntheticUsageEvent(seed,n,
@@ -131,12 +132,12 @@ func haReadAcknowledged(t *testing.T,ctx context.Context,ack map[string][]byte)i
  if err:=VerifyAcknowledged(ack,received);err!=nil{t.Fatal(err)}
  return len(received)
 }
-func haWriteFailure(t *testing.T,ctx context.Context,seed string)string{
+func haWriteFailure(t *testing.T,ctx context.Context,seed string,bootstrap ...string)string{
  t.Helper()
  e,err:=event.SyntheticUsageEvent(seed,999,time.Date(2026,11,16,11,0,0,0,time.UTC))
  if err!=nil{t.Fatal(err)}
  b,err:=json.Marshal(e);if err!=nil{t.Fatal(err)}
- writer:=haNewWriter(1)
+ writer:=haNewWriter(1,bootstrap...)
  defer writer.Close()
  writeCtx,cancel:=context.WithTimeout(ctx,12*time.Second)
  err=writer.WriteMessages(writeCtx,kafka.Message{Key:[]byte(e.EventID),Value:b})
@@ -150,6 +151,44 @@ func haWriteFailure(t *testing.T,ctx context.Context,seed string)string{
     t.Fatalf("expected Kafka NotEnoughReplicas response, not merely a transport failure: %v",err)
  }
  return err.Error()
+}
+
+
+// haProbeStaleBootstrapReconnect is a real client-side failover experiment:
+// old leader's TCP bootstrap is physically unavailable after docker stop.
+// The same signed event is retried against freshly verified live ISR seeds.
+// A failed/unknown old attempt is never elevated into the acknowledged map.
+func haProbeStaleBootstrapReconnect(t *testing.T,ctx context.Context,seed string,
+    stopped int,liveSeeds []string,ack map[string][]byte)string{
+ t.Helper()
+ if stopped<1||stopped>len(haBrokers)||len(liveSeeds)<2{t.Fatal("invalid failover bootstrap proof")}
+ for _,endpoint:=range liveSeeds{
+    if endpoint==haBrokers[stopped-1]{t.Fatalf("stopped broker %d still in live seeds",stopped)}
+ }
+ e,err:=event.SyntheticUsageEvent(seed,100,
+     time.Date(2026,11,16,11,0,0,0,time.UTC))
+ if err!=nil{t.Fatal(err)}
+ raw,err:=json.Marshal(e);if err!=nil{t.Fatal(err)}
+ msg:=kafka.Message{Key:[]byte(e.EventID),Value:raw}
+ stale:=haNewWriter(1,haBrokers[stopped-1])
+ oldCtx,oldCancel:=context.WithTimeout(ctx,4*time.Second)
+ oldErr:=stale.WriteMessages(oldCtx,msg)
+ oldCancel()
+ _=stale.Close()
+ if oldErr==nil{
+    t.Fatal("stopped former leader unexpectedly ACKed the stale-bootstrap probe")
+ }
+ t.Logf("stopped leader bootstrap was unavailable (UNKNOWN append, no billing ACK): %v",oldErr)
+ recovered:=haNewWriter(10,liveSeeds...)
+ defer recovered.Close()
+ retryCtx,retryCancel:=context.WithTimeout(ctx,45*time.Second)
+ // Reuse the exact original Kafka message key, payload and sealed Event ID.
+ err=recovered.WriteMessages(retryCtx,msg)
+ retryCancel()
+ if err!=nil{t.Fatalf("live ISR rebootstrap failed to ACK unchanged Event ID: %v",err)}
+ ack[e.EventID]=raw
+ t.Logf("rebootstrap ACKed original Event ID on verified live ISR seeds (%d)",len(liveSeeds))
+ return oldErr.Error()
 }
 
 // haProbeQuorumLossAndRestore deliberately removes two of three combined
@@ -176,7 +215,9 @@ func haProbeQuorumLossAndRestore(t *testing.T,ctx context.Context,seed string,
  e,err:=event.SyntheticUsageEvent(seed,1000,time.Date(2026,11,16,11,0,0,0,time.UTC))
  if err!=nil{t.Fatal(err)}
  raw,err:=json.Marshal(e);if err!=nil{t.Fatal(err)}
- writer:=haNewWriter(1)
+ // Bootstrap from the lone surviving leader, not from the two known-stopped
+ // controllers. A lack of ACK is still only an UNKNOWN append outcome.
+ writer:=haNewWriter(1,haBrokers[leader-1])
  writeCtx,cancel:=context.WithTimeout(ctx,12*time.Second)
  err=writer.WriteMessages(writeCtx,kafka.Message{Key:[]byte(e.EventID),Value:raw})
  cancel()
@@ -220,21 +261,26 @@ func TestThreeBrokerLeaderFailoverAndISRFailClosed(t *testing.T){
  haCompose(t,ctx,"stop",fmt.Sprintf("broker%d",stopped))
  degraded:=haWaitPartition(t,ctx,2,stopped)
  t.Logf("stopped leader %d, new leader=%d, remaining ISR=%d",stopped,degraded.Leader.ID,len(degraded.Isr))
- haPublish(t,ctx,seed,100,12,ack)
+ degradedSeeds,err:=LiveISREndpoints(degraded,haBrokers,2)
+ if err!=nil{t.Fatalf("bad live ISR metadata after leader loss: %v",err)}
+ staleBootstrapError:=haProbeStaleBootstrapReconnect(t,ctx,seed,stopped,degradedSeeds,ack)
+ haPublish(t,ctx,seed,101,11,ack,degradedSeeds...)
  if err:=RequireReplicaAndISR(degraded,3,2);err!=nil{t.Fatal(err)}
 
  // Reconfigure only this TEST TOPIC with two live brokers to make ISR=2
  // smaller than minISR=3 while preserving the controller majority.
  haTopicConfig(t,ctx,degraded.Leader.ID,3)
- rejected:=haWriteFailure(t,ctx,seed)
+ rejected:=haWriteFailure(t,ctx,seed,degradedSeeds[0])
  t.Logf("correctly rejected insufficient ISR: %s",rejected)
  haTopicConfig(t,ctx,degraded.Leader.ID,2)
- haPublish(t,ctx,seed,200,4,ack)
+ haPublish(t,ctx,seed,200,4,ack,degradedSeeds...)
 
  haCompose(t,ctx,"start",fmt.Sprintf("broker%d",stopped))
  restored:=haWaitPartition(t,ctx,3,-1)
  t.Logf("replica recovery ISR=%d leader=%d",len(restored.Isr),restored.Leader.ID)
- haPublish(t,ctx,seed,300,4,ack)
+ restoredSeeds,err:=LiveISREndpoints(restored,haBrokers,3)
+ if err!=nil{t.Fatalf("incomplete ISR3 recovery: %v",err)}
+ haPublish(t,ctx,seed,300,4,ack,restoredSeeds...)
  observed:=haReadAcknowledged(t,ctx,ack)
  if observed<len(ack){t.Fatalf("observed %d records for %d acknowledged",observed,len(ack))}
  quorumFailure:=haProbeQuorumLossAndRestore(t,ctx,seed,restored.Leader.ID,ack)
@@ -253,6 +299,9 @@ func TestThreeBrokerLeaderFailoverAndISRFailClosed(t *testing.T){
     "broker_acknowledged_ids":len(ack),
     "readback_records":observed,
     "all_acknowledged_verified":true,
+    "stale_bootstrap_probe_error":staleBootstrapError,
+    "rebootstrap_same_event_id_ack":true,
+    "rebootstrap_live_isr_size":len(degradedSeeds),
     "quorum_loss_tested":true,
     "quorum_loss_producer_error":quorumFailure,
     "acknowledged_ids_verified_after_quorum_restore":true,
