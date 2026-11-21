@@ -29,9 +29,13 @@ def select_window(now, window_minutes, lag_minutes):
         raise ValueError("window must be 1..1440 minutes")
     if not isinstance(lag_minutes, int) or not 5 <= lag_minutes <= 1440:
         raise ValueError("observation lag must be 5..1440 minutes")
-    utc_now = now.astimezone(UTC)
-    rounded = utc_now.replace(second=0, microsecond=0)
-    end = rounded - dt.timedelta(minutes=lag_minutes)
+    # Align to stable UTC epoch slots, not the actual CronJob start minute.
+    # Otherwise a 4-minute cluster scheduling delay shifts every boundary
+    # and creates overlaps/gaps even if the CronJob runs hourly.
+    eligible = now.astimezone(UTC) - dt.timedelta(minutes=lag_minutes)
+    elapsed_minutes = int(eligible.timestamp() // 60)
+    closed_slot_minutes = (elapsed_minutes // window_minutes) * window_minutes
+    end = dt.datetime.fromtimestamp(closed_slot_minutes * 60, tz=UTC)
     start = end - dt.timedelta(minutes=window_minutes)
     return start, end
 
