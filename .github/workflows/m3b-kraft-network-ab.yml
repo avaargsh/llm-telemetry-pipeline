@@ -1,0 +1,82 @@
+name: m3b-kraft-fixed-vs-dynamic-network-control
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/m3b-kraft-network-ab.yml"
+      - "deployments/docker-compose-ha-dynamic.yml"
+      - "internal/kafkaha/**"
+      - "scripts/m3b-kraft-parallel-smoke.sh"
+      - "scripts/m3b_network_ab_evidence.py"
+      - "scripts/test_m3b_network_ab_evidence.py"
+      - "scripts/m3b_kraft_diagnostics.py"
+      - "scripts/m3b_kraft_audit.py"
+      - "scripts/m3b_controller_sockets.py"
+  workflow_dispatch:
+jobs:
+  network-ab:
+    name: KRaft-parallel-fault-${{ matrix.profile }}-network
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - profile: pinned
+            compose: deployments/docker-compose-ha.yml
+          - profile: dynamic
+            compose: deployments/docker-compose-ha-dynamic.yml
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact tested HEAD
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go mod download && go mod verify
+      - name: Validate controlled Docker profile and independent negative tests
+        env:
+          M3B_HA_COMPOSE_FILE: ${{ matrix.compose }}
+        run: |
+          bash -n scripts/m3b-kraft-parallel-smoke.sh
+          docker compose -f "$M3B_HA_COMPOSE_FILE" config >/dev/null
+          python3 -m unittest discover -s scripts -p 'test_m3b_network_ab_evidence.py' -v
+          python3 -m unittest discover -s scripts -p 'test_m3b_controller_sockets.py' -v
+          python3 -m unittest discover -s scripts -p 'test_m3b_kraft_audit.py' -v
+          python3 -m unittest discover -s scripts -p 'test_m3b_kraft_diagnostics.py' -v
+          go test -count=1 ./internal/kafkaha
+      - name: Real parallel two-controller Kafka fault under selected network
+        env:
+          M3B_NETWORK_AB_MODE: ${{ matrix.profile }}
+          M3B_HA_COMPOSE_FILE: ${{ matrix.compose }}
+          M3B_KRAFT_DIAGNOSTICS_DIR: /tmp/m3b-parallel-kraft-diagnostics
+          M3B_PARALLEL_REPORT_PATH: /tmp/m3b-parallel-restart-report.json
+        run: bash scripts/m3b-kraft-parallel-smoke.sh
+      - name: Preserve true Kafka ACK/ISR recovery or INCOMPLETE receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m3b-network-ab-kafka-${{ matrix.profile }}
+          path: /tmp/m3b-parallel-restart-report.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Preserve normalized voter/DNS audit and A/B comparison
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m3b-network-ab-identity-${{ matrix.profile }}
+          path: /tmp/m3b-parallel-kraft-diagnostics/*.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Preserve actual kernel TCP peers during both-controller stop/start
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m3b-network-ab-sockets-${{ matrix.profile }}
+          path: /tmp/m3b-parallel-kraft-diagnostics/controller-peers.jsonl
+          if-no-files-found: warn
+          retention-days: 14
