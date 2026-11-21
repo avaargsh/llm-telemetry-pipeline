@@ -58,6 +58,13 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 - **M3c merged:** read-only bounded PostgreSQL↔ClickHouse reconciliation, report statuses for replay, pending, grace, missing, orphan, hash conflict, mismatched tokens, and orphaned Outbox; machine-readable JSON with nonzero failure/incomplete exit codes.
 - Explicitly incomplete: authenticated external on-call destinations and production Alertmanager HA/SLO (CI proves delivery only to an isolated webhook), DLQ redrive/retention governance, resilience beyond tested rebalance and single-partition broker-failure envelopes, independent production Kafka controllers, scheduled reconciliation/alerting, P95/P99 performance SLO, production authentication/secret management.
 
+## M7–M9 verification scope
+
+- **M7 merged (#32):** real PostgreSQL 17 synchronous physical standby, old-primary SIGKILL, manual promotion, and Ledger/Outbox idempotency and lease-fencing proof. Not automatic HA or guaranteed RPO/RTO.
+- **M8 merged (#33/#34):** three repeatable 25-RPS open-loop trials with scenario-only P95/P99 thresholds and strict evidence. No production SLA.
+- **M9 in draft:** joint sustained traffic + PostgreSQL primary SIGKILL, manual reconnect, same-Event-ID retry, full PostgreSQL/Kafka/ClickHouse reconciliation and fault-aware P95/P99. See [M9 experiment](docs/m9-pg-ha-sustained.md). **No M9 pass is claimed until exact-HEAD real CI and artifacts succeed.**
+- [Kafka KRaft ISR recovery #28](https://github.com/avaargsh/llm-telemetry-pipeline/issues/28) and [OSS rights/license #26](https://github.com/avaargsh/llm-telemetry-pipeline/issues/26) remain open.
+
 ## Docs
 
 - [M1 runbook](docs/m1-runbook.md)
