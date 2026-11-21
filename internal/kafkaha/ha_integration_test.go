@@ -191,12 +191,46 @@ func haProbeStaleBootstrapReconnect(t *testing.T,ctx context.Context,seed string
  return oldErr.Error()
 }
 
+// haQuorumStatusObserved performs a genuine Kafka metadata-quorum status
+// operation against the surviving host-side Docker broker endpoint. This
+// observation is NOT the instant quorum became healthy: CLI scheduling,
+ // retries and metadata response add measurement delay.
+func haQuorumStatusObserved(t *testing.T,ctx context.Context,keeper int) QuorumStatus{
+ t.Helper()
+ if keeper<1||keeper>3{t.Fatal("invalid live KRaft controller ID")}
+ probeStart:=time.Now()
+ var lastClass string
+ for {
+    probeCtx,cancel:=context.WithTimeout(ctx,8*time.Second)
+    service:=fmt.Sprintf("broker%d",keeper)
+    args:=[]string{"compose","-f","deployments/docker-compose-ha.yml",
+      "exec","-T",service,"/opt/kafka/bin/kafka-metadata-quorum.sh",
+      "--bootstrap-server",service+":19092","describe","--status"}
+    cmd:=exec.CommandContext(probeCtx,"docker",args...)
+    cmd.Dir="../.."
+    output,err:=cmd.CombinedOutput()
+    cancel()
+    if err==nil{
+      status,parseErr:=ParseQuorumStatus(string(output))
+      if parseErr==nil{return status}
+      lastClass="invalid_quorum_status"
+    }else{lastClass="quorum_cli_unavailable"}
+    if time.Since(probeStart)>45*time.Second{
+       t.Fatalf("quorum status cannot be independently verified after first voter restart: %s",lastClass)
+    }
+    select{
+    case <-ctx.Done():t.Fatalf("quorum status observation interrupted: %v",ctx.Err())
+    case <-time.After(time.Second):
+    }
+ }
+}
+
 // haProbeQuorumLossAndRestore deliberately removes two of three combined
 // controller/broker processes while retaining the current data leader. The
 // producer must NOT receive an ACK. A timeout or transport error is treated
 // as an unknown append outcome, not as proof the event never reached storage.
 func haProbeQuorumLossAndRestore(t *testing.T,ctx context.Context,seed string,
-    leader int,previousACKs map[string][]byte)string{
+    leader int,previousACKs map[string][]byte,trace *RecoveryTimeline)string{
  t.Helper()
  if leader<1||leader>3{t.Fatalf("invalid keeper broker %d",leader)}
  var stopped []string
@@ -206,6 +240,7 @@ func haProbeQuorumLossAndRestore(t *testing.T,ctx context.Context,seed string,
  for _,service:=range stopped{
     haCompose(t,ctx,"stop",service)
  }
+ trace.Mark("two_voters_stopped",leader,0,0,0)
  // Leave enough time for the surviving broker to recognize that a quorum
  // and all follower replicas are absent.
  select{
@@ -226,6 +261,7 @@ func haProbeQuorumLossAndRestore(t *testing.T,ctx context.Context,seed string,
     t.Fatalf("producer ACKed while only one of three combined Kafka nodes was available")
  }
  failure:=err.Error()
+ trace.Mark("quorum_loss_no_ack",leader,0,0,0)
  t.Logf("no ACK during loss of 2/3 controller+broker nodes; unconfirmed append possible: %s",failure)
  // Restore one voter first. Once the original leader plus one restarted
  // voter re-establish the controller majority and ISR=2, start the final
@@ -234,15 +270,23 @@ func haProbeQuorumLossAndRestore(t *testing.T,ctx context.Context,seed string,
  // staged recovery keeps the same 2/3 quorum-loss assertion while making
  // controller membership convergence observable at each step.
  haCompose(t,ctx,"start",stopped[0])
+ trace.Mark("first_voter_restarted",leader,0,0,0)
+ quorum:=haQuorumStatusObserved(t,ctx,leader)
+ trace.Mark("quorum_status_observed",quorum.LeaderID,0,quorum.HighWatermark,0)
  intermediate:=haWaitPartition(t,ctx,2,-1)
+ trace.Mark("intermediate_isr2_observed",intermediate.Leader.ID,len(intermediate.Isr),0,0)
  if err:=RequireReplicaAndISR(intermediate,3,2);err!=nil{t.Fatal(err)}
  haCompose(t,ctx,"start",stopped[1])
+ trace.Mark("second_voter_restarted",intermediate.Leader.ID,0,0,0)
  recovered:=haWaitPartition(t,ctx,3,-1)
+ trace.Mark("final_isr3_observed",recovered.Leader.ID,len(recovered.Isr),0,0)
  if err:=RequireReplicaAndISR(recovered,3,3);err!=nil{t.Fatal(err)}
  got:=haReadAcknowledged(t,ctx,previousACKs)
  if got<len(previousACKs){
     t.Fatalf("after quorum recovery visible=%d ACKed=%d",got,len(previousACKs))
  }
+ trace.Mark("all_acked_replayed",recovered.Leader.ID,len(recovered.Isr),0,len(previousACKs))
+ if _,err:=ValidateRecoveryMilestones(trace.steps);err!=nil{t.Fatalf("independent quorum/ISR timeline failed closed: %v",err)}
  return failure
 }
 
@@ -251,6 +295,12 @@ func TestThreeBrokerLeaderFailoverAndISRFailClosed(t *testing.T){
  ctx,cancel:=context.WithTimeout(context.Background(),7*time.Minute)
  defer cancel()
  seed:=fmt.Sprintf("m3b-ha-%d",time.Now().UnixNano())
+ trace:=NewRecoveryTimeline()
+ t.Cleanup(func(){
+   if err:=trace.WriteReceiptAlways(os.Getenv("M3B_RECOVERY_TIMELINE_PATH"),os.Getenv("M3B_EXACT_HEAD"));err!=nil{
+     t.Errorf("cannot preserve fail-closed KRaft recovery timeline: %v",err)
+   }
+ })
  ack:=make(map[string][]byte)
  initial:=haWaitPartition(t,ctx,3,-1)
  t.Logf("initial leader=%d ISR=%d",initial.Leader.ID,len(initial.Isr))
@@ -283,7 +333,7 @@ func TestThreeBrokerLeaderFailoverAndISRFailClosed(t *testing.T){
  haPublish(t,ctx,seed,300,4,ack,restoredSeeds...)
  observed:=haReadAcknowledged(t,ctx,ack)
  if observed<len(ack){t.Fatalf("observed %d records for %d acknowledged",observed,len(ack))}
- quorumFailure:=haProbeQuorumLossAndRestore(t,ctx,seed,restored.Leader.ID,ack)
+ quorumFailure:=haProbeQuorumLossAndRestore(t,ctx,seed,restored.Leader.ID,ack,trace)
  t.Logf("quorum loss produced no new Kafka ACK: %s",quorumFailure)
 
  report:=map[string]any{
@@ -303,6 +353,8 @@ func TestThreeBrokerLeaderFailoverAndISRFailClosed(t *testing.T){
     "rebootstrap_same_event_id_ack":true,
     "rebootstrap_live_isr_size":len(degradedSeeds),
     "quorum_loss_tested":true,
+    "quorum_isr_timeline_verified":true,
+    "quorum_status_observed_not_actual_restoration_instant":true,
     "quorum_loss_producer_error":quorumFailure,
     "acknowledged_ids_verified_after_quorum_restore":true,
     "notes":"Confirmed ACKed records only; failed/unknown ACK may still create a physical record. No cross-AZ, disk-loss, controller quorum-loss, or exactly-once claim.",
