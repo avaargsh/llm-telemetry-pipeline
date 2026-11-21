@@ -105,12 +105,16 @@ for i in $(seq 1 40); do
 done
 
 mkdir -p "$(dirname "$output")"
+slo_args=()
+[[ -z "${M5_MAX_ACK_P95_MS:-}" ]] || slo_args+=(--max-ack-p95-ms "$M5_MAX_ACK_P95_MS")
+[[ -z "${M5_MAX_VISIBLE_P95_MS:-}" ]] || slo_args+=(--max-visible-p95-ms "$M5_MAX_VISIBLE_P95_MS")
+[[ -z "${M5_MAX_DRAIN_SECONDS:-}" ]] || slo_args+=(--max-drain-seconds "$M5_MAX_DRAIN_SECONDS")
 CLICKHOUSE_PASSWORD=localdev-only USAGE_INGEST_CREDENTIALS_JSON="$credentials" \
 python3 scripts/m5_benchmark.py \
   --events-file "$tmp/events.jsonl" --seed "$seed" \
   --concurrency "$concurrency" --partitions "$partitions" \
   --batch-size "$batch" --visibility-timeout "$timeout" \
   --pid "api:$api_pid" --pid "relay:$relay_pid" --pid "consumer:$worker_pid" \
-  --output "$output"
+  "${slo_args[@]}" --output "$output"
 echo "M5 correctness report: $output"
 echo "WARNING: single-node, local development credentials, RF=1, and CI contention are NOT production SLO evidence"
