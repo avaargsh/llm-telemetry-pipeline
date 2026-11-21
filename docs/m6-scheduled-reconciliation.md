@@ -6,7 +6,7 @@
 
 The existing reconciler requires `--start` and `--end` manually. A CronJob must choose **one finite UTC event-time window**, wait for a configured observation lag, preserve the three business statuses, and output a safe summary. A Kubernetes Job's success/failure can then be monitored independently by the operator.
 
-At UTC `12:15`, hourly `--window-minutes 60 --lag-minutes 15` selects `[11:00, 12:00)`. Next hourly execution covers `[12:00, 13:00)`. The window is inclusive start, exclusive end, and aligned to a whole UTC minute. The lag is intentionally separate from the reconciler's `--grace` field, which classifies very recent `published_at` timestamps.
+At UTC `12:15`, hourly `--window-minutes 60 --lag-minutes 15` selects `[11:00, 12:00)`. If the Job starts late at `12:19`, it still selects that **same** `[11:00, 12:00)` slot, rather than shifting the time interval. Next hourly execution covers `[12:00, 13:00)`. The window is inclusive start, exclusive end, and aligned to a fixed UTC epoch slot of `window-minutes` (60 minutes = top of hour). Configure the CronJob cadence to match `window-minutes`. The lag is intentionally separate from the reconciler's `--grace` field, which classifies very recent `published_at` timestamps.
 
 - `PASS` → exit **0**, only if reconciliation is complete and has no confirmed conflicts.
 - `FAIL` → exit **2**, confirmed missing/orphan/hash-conflict/token-mismatch/missing-Outbox events.
