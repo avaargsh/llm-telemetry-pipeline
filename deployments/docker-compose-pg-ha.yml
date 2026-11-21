@@ -1,0 +1,46 @@
+# Disposable PostgreSQL 17 physical streaming replication experiment.
+# Not Patroni, not automatic failover, not a production HA recipe.
+services:
+  pg-primary:
+    image: postgres:17
+    hostname: pg-primary
+    environment:
+      POSTGRES_DB: telemetry
+      POSTGRES_USER: telemetry
+      POSTGRES_PASSWORD: localdev-only
+    command: ["postgres", "-c", "wal_level=replica", "-c", "max_wal_senders=8", "-c", "max_replication_slots=8", "-c", "hot_standby=on"]
+    ports:
+      - "127.0.0.1:25432:5432"
+    volumes:
+      - pgha_primary:/var/lib/postgresql/data
+      - ../migrations/postgres/001_ledger_outbox.sql:/docker-entrypoint-initdb.d/001_ledger_outbox.sql:ro
+      - ./pgha/002_replication.sh:/docker-entrypoint-initdb.d/002_replication.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telemetry -d telemetry"]
+      interval: 3s
+      retries: 40
+  pg-standby:
+    image: postgres:17
+    hostname: pg-standby
+    depends_on:
+      pg-primary:
+        condition: service_healthy
+    environment:
+      PGDATA: /var/lib/postgresql/data
+      POSTGRES_DB: telemetry
+      POSTGRES_USER: telemetry
+      POSTGRES_PASSWORD: localdev-only
+      PGPASSWORD: lab-replication-only
+    entrypoint: ["/bin/bash", "/opt/pgha/bootstrap-standby.sh"]
+    ports:
+      - "127.0.0.1:25433:5432"
+    volumes:
+      - pgha_standby:/var/lib/postgresql/data
+      - ./pgha/bootstrap-standby.sh:/opt/pgha/bootstrap-standby.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telemetry -d telemetry"]
+      interval: 3s
+      retries: 40
+volumes:
+  pgha_primary:
+  pgha_standby:

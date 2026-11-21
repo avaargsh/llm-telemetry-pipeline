@@ -113,3 +113,9 @@ m8-sustained-tests:
 # Three independently isolated 45s, >=1000-event full-stack paced trials.
 m8-sustained-smoke:
 	bash scripts/m8-sustained-smoke.sh
+
+.PHONY: m7-postgres-ha-smoke
+
+# Disposable physical streaming standby and manual promotion fault proof.
+m7-postgres-ha-smoke:
+	bash scripts/m7-pgha-failover-smoke.sh
