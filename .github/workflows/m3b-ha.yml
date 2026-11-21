@@ -28,6 +28,14 @@ jobs:
           path: /tmp/m3b-kafka-ha-report.json
           if-no-files-found: ignore
           retention-days: 14
+      - name: Archive exact-code-head quorum/ISR recovery timeline even if incomplete
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m3b-quorum-isr-recovery-timeline
+          path: /tmp/m3b-kraft-recovery-timeline.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Archive voter identity, quorum and Docker DNS evidence
         if: always()
         uses: actions/upload-artifact@v4
