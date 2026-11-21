@@ -68,6 +68,7 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 - [M3b generation-fenced consumer and rebalance experiment](docs/m3b-rebalance.md)
 - [M3b-P1 three-broker RF3/minISR2 fault matrix](docs/m3b-ha.md)
 - [M3c Ledger/ClickHouse reconciliation](docs/m3c-reconciliation.md)
+- [M6 scheduled reconciliation with redacted evidence and a Kubernetes CronJob template](docs/m6-scheduled-reconciliation.md)
 - [M3d ClickHouse downtime and retention headroom](docs/m3d-outage.md)
 - [M3e live Kafka Lag exporter, Prometheus alerts and slow ClickHouse recovery](docs/m3e-lag-monitor.md)
 - [M4a synthetic metric delivery-layer tests](docs/m4a-alert-delivery.md)
