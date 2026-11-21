@@ -78,3 +78,12 @@ m4-alert-e2e:
 # down, followed by Relay/ClickHouse recovery and strict reconciliation.
 m5a-http-recovery-smoke:
 	bash scripts/m5a-http-recovery-smoke.sh
+
+.PHONY: m5-performance-smoke m5-performance-tests
+
+# Disposable real stack throughput/latency/resource baseline (not a production SLO).
+m5-performance-smoke:
+	bash scripts/m5-performance-smoke.sh
+
+m5-performance-tests:
+	python3 -m unittest discover -s scripts -p 'test_m5_benchmark.py' -v
