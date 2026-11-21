@@ -1,6 +1,8 @@
 # LLM Telemetry Pipeline
 
-> **Status:** M1, M2a (Ledger/Outbox), M2b (durable DLQ), M2c (replay-safe analysis) and M3a (Kafka replay fault tests) are merged and CI verified. M3c PostgreSQL ↔ ClickHouse reconciliation is merged and CI verified ([PR #8](https://github.com/avaargsh/llm-telemetry-pipeline/pull/8)). M3b-P1 three-broker KRaft fault experiments are **merged** and CI verified ([PR #12](https://github.com/avaargsh/llm-telemetry-pipeline/pull/12)). No exactly-once or absolute zero-loss claim. M5a HTTP ingestion is merged ([PR #23](https://github.com/avaargsh/llm-telemetry-pipeline/pull/23)); production performance SLOs are NOT established.
+> **Status (2026-11-21):** M1–M6 correctness/recovery/monitoring baselines, M7 PostgreSQL synchronous standby manual-failover lab, M8 sustained P95/P99 scenario guardrails, and M9 controlled failover-under-load experiment are merged and CI verified. [M9 #36](https://github.com/avaargsh/llm-telemetry-pipeline/pull/36) processed 4,500 unique usage Event IDs during 25-RPS/180-second load with 23 uncertain ACKs recovered using the same IDs; [Kafka reconnect #37](https://github.com/avaargsh/llm-telemetry-pipeline/pull/37) passed 3 independent KRaft fault trials. **These are isolated reproducibility experiments, NOT production RPO/RTO, exactly-once Kafka, or a production SLO.** [KRaft quorum/ISR issue #28](https://github.com/avaargsh/llm-telemetry-pipeline/issues/28) is still open.
+
+> **Distribution status:** This public repository does **not yet contain an explicit open-source `LICENSE`**. Do not assume unrestricted reuse, redistribution or community contribution rights. See [OSS readiness and provenance gates](docs/oss-readiness.md) and [Issue #26](https://github.com/avaargsh/llm-telemetry-pipeline/issues/26) for the required maintainer ownership review and license decision.
 
 Go + Kafka (KRaft) + ClickHouse + PostgreSQL for reliable multi-tenant LLM inference usage telemetry.
 
@@ -62,7 +64,8 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 
 - **M7 merged (#32):** real PostgreSQL 17 synchronous physical standby, old-primary SIGKILL, manual promotion, and Ledger/Outbox idempotency and lease-fencing proof. Not automatic HA or guaranteed RPO/RTO.
 - **M8 merged (#33/#34):** three repeatable 25-RPS open-loop trials with scenario-only P95/P99 thresholds and strict evidence. No production SLA.
-- **M9 in draft:** joint sustained traffic + PostgreSQL primary SIGKILL, manual reconnect, same-Event-ID retry, full PostgreSQL/Kafka/ClickHouse reconciliation and fault-aware P95/P99. See [M9 experiment](docs/m9-pg-ha-sustained.md). **No M9 pass is claimed until exact-HEAD real CI and artifacts succeed.**
+- **M9 merged (#36):** real open-loop 25 RPS × 180 seconds, PostgreSQL primary SIGKILL with a held uncommitted Ledger/Outbox transaction, manually promoted physical standby, explicit API/Relay reconnection, and all 4,500 unique Event IDs fully reconciled across authoritative PostgreSQL and trusted ClickHouse. The exact-HEAD raw CSV validator, fault-window latency report and final 20/20 regression matrix passed; see [M9 experiment](docs/m9-pg-ha-sustained.md) and [CI evidence](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/44868292150). **PASS_EXPERIMENT_ONLY**, never production RPO/RTO or a fault-mode SLO.
+- **M3b reconnect hardening merged (#37):** failover clients rebootstrap using only verified live ISR nodes, retaining the exact event key and sealed payload. Three independent full KRaft fault trials passed (35/35 ACKed IDs in each); this does **not** resolve the intermittent voter-key/ISR root-cause investigation.
 - [Kafka KRaft ISR recovery #28](https://github.com/avaargsh/llm-telemetry-pipeline/issues/28) and [OSS rights/license #26](https://github.com/avaargsh/llm-telemetry-pipeline/issues/26) remain open.
 
 ## Docs
@@ -82,6 +85,10 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 - [M4a+ actual Kafka lag to Alertmanager delivery](docs/m4-live-alerts.md)
 - [M5 performance baseline, reproducible SLO candidates, and profile comparator](docs/performance.md)
 - [M8 sustained fixed-RPS P95/P99 trial reports and fail-closed SLO evaluator](docs/m8-sustained-slo.md)
+- [M9 real PostgreSQL HA failover under sustained load](docs/m9-pg-ha-sustained.md)
+- [OSS readiness, rights provenance and release checklist](docs/oss-readiness.md)
+- [Security reporting and limitations](SECURITY.md)
+- [Contributor preparation and current license boundary](CONTRIBUTING.md)
 - [Reliability contract](docs/reliability-contract.md)
 - [Verification evidence](docs/verification-record.md)
 - [Fault matrix](docs/fault-matrix.md)
