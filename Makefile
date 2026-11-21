@@ -79,6 +79,12 @@ m4-alert-e2e:
 m5a-http-recovery-smoke:
 	bash scripts/m5a-http-recovery-smoke.sh
 
+.PHONY: m5b-outbox-crash-smoke
+
+# Real Kafka ACK, simulated Relay crash before PG mark, fenced retry.
+m5b-outbox-crash-smoke:
+	bash scripts/m5b-relay-ack-crash-smoke.sh
+
 .PHONY: m5-performance-smoke m5-performance-tests
 
 # Disposable real stack throughput/latency/resource baseline (not a production SLO).
@@ -86,4 +92,4 @@ m5-performance-smoke:
 	bash scripts/m5-performance-smoke.sh
 
 m5-performance-tests:
-	python3 -m unittest discover -s scripts -p 'test_m5_benchmark.py' -v
+	python3 -m unittest discover -s scripts -p 'test_m5_*.py' -v
