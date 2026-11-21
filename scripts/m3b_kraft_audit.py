@@ -21,7 +21,7 @@ VOTER_CROSS_TARGET = re.compile(
     r".*?ReplicaKey\(id=(\d+),.*?doesn't match the local key",
     re.IGNORECASE,
 )
-COMPOSE = ("docker", "compose", "-f", "deployments/docker-compose-ha.yml")
+COMPOSE = ("docker", "compose", "-f", os.getenv("M3B_HA_COMPOSE_FILE", "deployments/docker-compose-ha.yml"))
 
 
 def _complete_snapshot(receipt, expected_phase):

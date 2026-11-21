@@ -1,0 +1,83 @@
+"""A/B profile evidence guard: recovery safety remains mandatory in both modes."""
+import importlib.util
+import pathlib
+import unittest
+
+spec=importlib.util.spec_from_file_location(
+    "m3b_network_ab_evidence", pathlib.Path(__file__).with_name("m3b_network_ab_evidence.py"))
+evidence=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(evidence)
+
+HEAD="deadbeef"
+def receipt():
+    return {"exact_head":HEAD,"result":"PASS_EXPERIMENT_ONLY",
+            "scenario":"two_voter_parallel_restart", "initial_isr":3,
+            "recovered_isr":3, "acknowledged_ids":35,
+            "all_acknowledged_verified":True,"no_ack_during_quorum_loss":True}
+
+def audit():
+    return {"exact_head":HEAD,"complete_observations":True,
+            "verdict":"NO_MISMATCH_OBSERVED",
+            "identity_changes":[],"dns_misroutes":[],
+            "ip_changed_nodes":[],"observed_voter_target_mismatches":[]}
+
+def sockets():
+    return {"exact_head":HEAD,"result":"EVIDENCE_CAPTURED_NOT_CAUSAL_PROOF",
+            "sample_count":8,"captured_nodes":["broker1","broker2","broker3"],
+            "unique_observed_controller_peers":["172.29.241.11","172.29.241.12"]}
+
+def nodes(ips):
+    return {"nodes": {f"broker{i}":{"container_ipv4":ip} for i,ip in enumerate(ips,1)}}
+
+class NetworkABContract(unittest.TestCase):
+    def test_fixed_profile_requires_zero_drift(self):
+        result=evidence.assess("pinned",HEAD,receipt(),audit(),sockets(),nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]),nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]))
+        self.assertEqual(result["result"],"RECOVERY_VERIFIED_ENDPOINTS_FIXED")
+        self.assertEqual(result["reassigned_addresses"],[])
+
+    def test_dynamic_swapped_ipv4_is_observed_not_suppressed(self):
+        a=audit()
+        a.update(ip_changed_nodes=["broker2","broker3"],verdict="CONTAINER_ENDPOINT_DRIFT_OBSERVED")
+        before=nodes(["172.22.0.11","172.22.0.12","172.22.0.13"])
+        after=nodes(["172.22.0.11","172.22.0.13","172.22.0.12"])
+        result=evidence.assess("dynamic",HEAD,receipt(),a,sockets(),before,after)
+        self.assertEqual(result["result"],"RECOVERY_VERIFIED_ENDPOINTS_DYNAMIC_OBSERVED")
+        self.assertEqual(len(result["reassigned_addresses"]),2)
+        self.assertIn({"ipv4":"172.22.0.12","before_owner":"broker2","after_owner":"broker3"},result["reassigned_addresses"])
+
+    def test_audited_cross_target_voter_requests_are_not_hidden(self):
+        a=audit()
+        a["observed_voter_target_mismatches"]=[{"sender_id":1,"receiver_id":2,"target_id":3,"count":7}]
+        a["verdict"]="VOTER_TARGET_ID_MISMATCH_OBSERVED"
+        result=evidence.assess("dynamic",HEAD,receipt(),a,sockets(),nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]),nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]))
+        self.assertEqual(result["cross_target_voter_request_count"],7)
+        self.assertFalse(result["causal_root_cause_proven"])
+
+    def test_fixed_drift_and_cross_target_both_fail_closed(self):
+        for key,value in (("ip_changed_nodes",["broker2"]),("observed_voter_target_mismatches",[{"count":4}])):
+            a=audit();a[key]=value
+            with self.subTest(key=key),self.assertRaises(ValueError):
+                evidence.assess("pinned",HEAD,receipt(),a,sockets(),nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]),nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]))
+
+    def test_dynamic_cannot_waive_identity_or_dns_misroutes(self):
+        for key,val in (("identity_changes",[{"node":"broker2","field":"node.id"}]),("dns_misroutes",[{"observer":"broker1","target":"broker2"}])):
+            a=audit();a[key]=val
+            with self.subTest(key=key),self.assertRaises(ValueError):
+                evidence.assess("dynamic",HEAD,receipt(),a,sockets(),nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]),nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]))
+
+    def test_missing_quorum_ack_or_socket_proof_never_pass(self):
+        for key,val in (("acknowledged_ids",34),("no_ack_during_quorum_loss",False),("all_acknowledged_verified",False)):
+            r=receipt();r[key]=val
+            with self.subTest(key=key),self.assertRaises(ValueError):
+                evidence.assess("dynamic",HEAD,r,audit(),sockets(),nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]),nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]))
+        bad=sockets();bad["result"]="INCOMPLETE"
+        with self.assertRaises(ValueError):
+            evidence.assess("dynamic",HEAD,receipt(),audit(),bad,nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]),nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]))
+
+    def test_unbound_head_and_malformed_mode_fail(self):
+        for profile,head in (("dynamic","UNBOUND"),("fixed",HEAD),("random",HEAD)):
+            with self.subTest(profile=profile,head=head),self.assertRaises(ValueError):
+                evidence.assess(profile,head,receipt(),audit(),sockets(),nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]),nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]))
+
+if __name__=="__main__":
+    unittest.main()

@@ -2,7 +2,14 @@
 # Isolated parallel-voter KRaft restart fault lab. Not production HA.
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
-compose=(docker compose -f deployments/docker-compose-ha.yml)
+profile="${M3B_NETWORK_AB_MODE:-pinned}"
+compose_file="${M3B_HA_COMPOSE_FILE:-deployments/docker-compose-ha.yml}"
+case "$profile:$compose_file" in
+  pinned:deployments/docker-compose-ha.yml|dynamic:deployments/docker-compose-ha-dynamic.yml) ;;
+  *) echo "invalid A/B control: $profile:$compose_file" >&2; exit 2 ;;
+esac
+export M3B_HA_COMPOSE_FILE="$compose_file"
+compose=(docker compose -f "$compose_file")
 diagnostics="${M3B_KRAFT_DIAGNOSTICS_DIR:-/tmp/m3b-parallel-kraft-diagnostics}"
 export M3B_EXACT_HEAD="$(git rev-parse HEAD)"
 export TEST_KAFKA_HA_CONCURRENT=1
@@ -87,6 +94,7 @@ PY
 # Observe actual kernel TCP peers while the original real fault test runs.
 # Observed namespace sockets do not establish Java DNS cache ownership.
 python3 scripts/m3b_controller_sockets.py sample \
+  --compose "$compose_file" \
   --head "$M3B_EXACT_HEAD" \
   --out "$M3B_CONTROLLER_SOCKET_RAW_PATH" \
   --interval 2 --duration 540 >/dev/null 2>&1 &
@@ -100,15 +108,11 @@ verify_socket_evidence
 python3 scripts/m3b_parallel_proof.py "$M3B_PARALLEL_REPORT_PATH" --head "$M3B_EXACT_HEAD"
 capture after_success
 audit after_success
-python3 - <<'PY'
-import json,os
-p=os.path.join(os.environ.get("M3B_KRAFT_DIAGNOSTICS_DIR","/tmp/m3b-parallel-kraft-diagnostics"),"voter-identity-audit.json")
-r=json.load(open(p))
-assert r["exact_head"]==os.environ["M3B_EXACT_HEAD"],"audit bound to wrong code HEAD"
-assert r["baseline_phase"]=="before_fault" and r["comparison_phase"]=="after_success"
-assert r["complete_observations"] is True, "missing identity, Docker DNS or voter log observations"
-assert r["verdict"]=="NO_MISMATCH_OBSERVED",r
-assert not r["ip_changed_nodes"] and not r["identity_changes"] and not r["dns_misroutes"],r
-assert not r["observed_voter_target_mismatches"],r
-print("PASS parallel voter recovery: stable IDs and IP, no sampled cross-target VOTE")
-PY
+python3 scripts/m3b_network_ab_evidence.py \
+  --profile "$profile" --head "$M3B_EXACT_HEAD" \
+  --report "$M3B_PARALLEL_REPORT_PATH" \
+  --audit "$diagnostics/voter-identity-audit.json" \
+  --sockets "$M3B_CONTROLLER_SOCKET_SUMMARY_PATH" \
+  --before "$diagnostics/before_fault.json" \
+  --after "$diagnostics/after_success.json" \
+  --out "$diagnostics/network-ab-comparison.json"
