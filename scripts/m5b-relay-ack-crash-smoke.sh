@@ -42,5 +42,11 @@ export TEST_POSTGRES_DSN='postgres://telemetry:localdev-only@localhost:15432/tel
 export TEST_KAFKA_BROKER='localhost:29092'
 export TEST_M5B_KAFKA_TOPIC="$topic"
 
+# "go test ./internal/outbox" runs with package cwd, not repository root.
+# Publish the receipt to the repository workspace so Actions can upload it.
+if [[ -n "${M5B_EVIDENCE_PATH:-}" && "${M5B_EVIDENCE_PATH}" != /* ]]; then
+  export M5B_EVIDENCE_PATH="$PWD/$M5B_EVIDENCE_PATH"
+fi
+
 go test -count=1 -timeout 90s -v ./internal/outbox -run '^TestRelayKafkaACKCrashWindowRealBroker$'
 echo 'PASS M5b ACK/crash recovery: two Kafka copies, one PG Ledger/Outbox record, stale lease fenced'
