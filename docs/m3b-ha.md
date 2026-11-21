@@ -227,11 +227,8 @@ Local reproducibility and offline analysis:
 ```bash
 python3 -m unittest discover -s scripts -p 'test_m3b_kraft_audit.py' -v
 make kafka-ha-smoke
-python3 scripts/m3b_kraft_audit.py \
-  --before /tmp/m3b-kraft-diagnostics/before_fault.json \
-  --after /tmp/m3b-kraft-diagnostics/after_success.json \
-  --out /tmp/m3b-kraft-diagnostics/voter-identity-audit.json \
-  --docker-logs
+# The smoke script invokes the audit automatically before Docker cleanup.
+cat /tmp/m3b-kraft-diagnostics/voter-identity-audit.json
 ```
 
 The snapshot uses `getent hosts` *inside* the Kafka containers, which
