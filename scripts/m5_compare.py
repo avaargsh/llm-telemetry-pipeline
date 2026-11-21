@@ -27,7 +27,9 @@ def validate(receipt):
         value = receipt.get(field)
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
             raise ValueError(f"missing or invalid metric: {field}")
-    for key in ("submitted", "concurrency", "partitions", "consumer_batch_size"):
+    if not isinstance(receipt.get("relay_batch_timeout"), str) or not receipt["relay_batch_timeout"].endswith(("ms", "s")):
+        raise ValueError("missing relay batch timeout")
+    for key in ("submitted", "concurrency", "partitions", "consumer_batch_size", "relay_claim_limit"):
         if not isinstance(receipt.get(key), int) or receipt[key] <= 0:
             raise ValueError(f"invalid profile: {key}")
 
@@ -38,19 +40,20 @@ def markdown(reports):
     for r in reports:
         validate(r)
     first = reports[0]
-    header = "| Run | Count | Concurrency | Partitions | Batch | " + " | ".join(label for _, label in FIELDS) + " | Accepted/s vs baseline |"
+    header = "| Run | Count | Concurrency | Partitions | Batch | Relay limit | Relay timeout | " + " | ".join(label for _, label in FIELDS) + " | Visible P95 factor |"
     divider = "|" + "|".join("---" for _ in header.strip("|").split("|")) + "|"
     rows = [header, divider]
     for idx, r in enumerate(reports):
-        baseline = first["acceptance_throughput_events_s"]
-        factor = "n/a" if baseline == 0 else f"{r['acceptance_throughput_events_s']/baseline:.2f}x"
+        baseline = first["visible_p95_ms"]
+        factor = "n/a" if r["visible_p95_ms"] == 0 else f"{baseline/r['visible_p95_ms']:.2f}x"
         vals = [str(idx + 1), str(r["submitted"]), str(r["concurrency"]),
-                str(r["partitions"]), str(r["consumer_batch_size"])]
+                str(r["partitions"]), str(r["consumer_batch_size"]),
+                str(r["relay_claim_limit"]), r["relay_batch_timeout"]]
         vals.extend(f"{r[field]:.2f}" for field, _ in FIELDS)
         vals.append(factor)
         rows.append("| " + " | ".join(vals) + " |")
     profiles = {(r["submitted"], r["concurrency"], r["partitions"],
-                 r["consumer_batch_size"]) for r in reports}
+                 r["consumer_batch_size"], r["relay_claim_limit"], r["relay_batch_timeout"]) for r in reports}
     rows.append("")
     rows.append("Evidence: raw receipts record git SHA and run IDs; only correctness-complete runs are listed.")
     if len(profiles) > 1:
