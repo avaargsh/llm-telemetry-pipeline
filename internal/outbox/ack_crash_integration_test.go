@@ -36,7 +36,7 @@ func TestRelayKafkaACKCrashWindowRealBroker(t *testing.T) {
     defer cancel()
     db, err := sql.Open("pgx", dsn)
     if err != nil { t.Fatal(err) }
-    defer db.Close()
+    t.Cleanup(func() { _ = db.Close() })
     if err := db.PingContext(ctx); err != nil { t.Fatal(err) }
 
     seed := fmt.Sprintf("m5b-ack-crash-%d", time.Now().UnixNano())
@@ -170,8 +170,7 @@ func TestRelayKafkaACKCrashWindowRealBroker(t *testing.T) {
         if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil { t.Fatal(err) }
         data, err := json.MarshalIndent(evidence, "", "  ")
         if err != nil { t.Fatal(err) }
-        if err := os.WriteFile(path, append(data, '
-'), 0644); err != nil { t.Fatal(err) }
+        if err := os.WriteFile(path, append(data, '\n'), 0644); err != nil { t.Fatal(err) }
     }
     t.Logf("PASS: Kafka physical copies=2, PostgreSQL Ledger=1 Outbox=1, stale owner fenced, replacement published")
 }
