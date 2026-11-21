@@ -103,3 +103,13 @@ m5-performance-smoke:
 
 m5-performance-tests:
 	python3 -m unittest discover -s scripts -p 'test_m5_*.py' -v
+
+.PHONY: m8-sustained-tests m8-sustained-smoke
+
+# Strict open-loop pacing and per-window P95/P99 SLO contract tests.
+m8-sustained-tests:
+	python3 -m unittest discover -s scripts -p 'test_m8_sustained.py' -v
+
+# Three independently isolated 45s, >=1000-event full-stack paced trials.
+m8-sustained-smoke:
+	bash scripts/m8-sustained-smoke.sh
