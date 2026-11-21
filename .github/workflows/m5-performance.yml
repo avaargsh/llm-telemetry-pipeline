@@ -1,0 +1,53 @@
+name: m5-performance-baseline
+on:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  perf-correctness-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go mod download
+      - run: go mod verify
+      - name: M5 deterministic reporting and SLO contract unit tests
+        run: python3 -m unittest discover -s scripts -p 'test_m5_*.py' -v
+      - name: "Isolated baseline profile: default 100ms Kafka publish timeout"
+        env:
+          M5_COUNT: "128"
+          M5_CONCURRENCY: "4"
+          M5_PARTITIONS: "6"
+          M5_BATCH_SIZE: "32"
+          M5_VISIBILITY_TIMEOUT: "90"
+          M5_RELAY_BATCH_TIMEOUT: "100ms"
+          M5_RELAY_CLAIM_LIMIT: "5"
+          M5_OUTPUT: artifacts/m5-baseline.json
+        run: bash scripts/m5-performance-smoke.sh
+      - name: "Isolated tuned profile: 5ms Kafka publisher timeout (same runner)"
+        env:
+          M5_COUNT: "128"
+          M5_CONCURRENCY: "4"
+          M5_PARTITIONS: "6"
+          M5_BATCH_SIZE: "32"
+          M5_VISIBILITY_TIMEOUT: "90"
+          M5_RELAY_BATCH_TIMEOUT: "5ms"
+          M5_RELAY_CLAIM_LIMIT: "5"
+          M5_OUTPUT: artifacts/m5-tuned.json
+        run: bash scripts/m5-performance-smoke.sh
+      - name: Fail-closed comparison of measured profiles
+        run: python3 scripts/m5_compare.py artifacts/m5-baseline.json artifacts/m5-tuned.json --output artifacts/m5-comparison.md
+      - name: Archive raw performance and resource measurement
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m5-performance-baseline-report
+          path: |
+            artifacts/m5-baseline.json
+            artifacts/m5-tuned.json
+            artifacts/m5-comparison.md
+          if-no-files-found: warn
+          retention-days: 14
