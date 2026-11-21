@@ -18,14 +18,28 @@ class WindowTests(unittest.TestCase):
     def test_inclusive_exclusive_utc_time_window_is_closed_before_lag(self):
         start, end = sched.select_window(
             dt.datetime(2026, 11, 21, 12, 37, 51, tzinfo=UTC), 60, 15)
-        self.assertEqual(start.isoformat(), "2026-11-21T11:22:00+00:00")
-        self.assertEqual(end.isoformat(), "2026-11-21T12:22:00+00:00")
+        self.assertEqual(start.isoformat(), "2026-11-21T11:00:00+00:00")
+        self.assertEqual(end.isoformat(), "2026-11-21T12:00:00+00:00")
 
     def test_timezone_aware_inputs_normalized_to_utc(self):
         est = dt.timezone(dt.timedelta(hours=-5))
         a, b = sched.select_window(dt.datetime(2026, 11, 21, 7, 37, 59, tzinfo=est), 30, 10)
-        self.assertEqual(a.isoformat(), "2026-11-21T11:27:00+00:00")
-        self.assertEqual(b.isoformat(), "2026-11-21T11:57:00+00:00")
+        self.assertEqual(a.isoformat(), "2026-11-21T11:30:00+00:00")
+        self.assertEqual(b.isoformat(), "2026-11-21T12:00:00+00:00")
+
+    def test_late_cronjob_start_does_not_shift_reconciliation_event_time_slot(self):
+        on_time = sched.select_window(
+            dt.datetime(2026, 11, 21, 12, 15, tzinfo=UTC), 60, 15)
+        late = sched.select_window(
+            dt.datetime(2026, 11, 21, 12, 19, 58, tzinfo=UTC), 60, 15)
+        self.assertEqual(on_time, late)
+        self.assertEqual(on_time[0].isoformat(), "2026-11-21T11:00:00+00:00")
+        self.assertEqual(on_time[1].isoformat(), "2026-11-21T12:00:00+00:00")
+
+    def test_contiguous_slots_across_hourly_schedules(self):
+        slot1 = sched.select_window(dt.datetime(2026, 11, 21, 12, 15, tzinfo=UTC), 60, 15)
+        slot2 = sched.select_window(dt.datetime(2026, 11, 21, 13, 15, tzinfo=UTC), 60, 15)
+        self.assertEqual(slot1[1], slot2[0])
 
     def test_unsafe_window_and_lag_rejected(self):
         for win, lag in [(0, 15), (60, 0), (60, 4), (1441, 15), (30, 1441), (-2, 15)]:
@@ -36,8 +50,8 @@ class WindowTests(unittest.TestCase):
 
 class ReportTests(unittest.TestCase):
     def setUp(self):
-        self.start = dt.datetime(2026, 11, 21, 11, 22, tzinfo=UTC)
-        self.end = dt.datetime(2026, 11, 21, 12, 22, tzinfo=UTC)
+        self.start = dt.datetime(2026, 11, 21, 11, 0, tzinfo=UTC)
+        self.end = dt.datetime(2026, 11, 21, 12, 0, tzinfo=UTC)
 
     def report(self, result="FAIL"):
         counts = {"matched": 7, "missing": 0, "pending": 0}
