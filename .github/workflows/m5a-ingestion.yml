@@ -33,3 +33,17 @@ jobs:
       - name: Stop isolated test environment
         if: always()
         run: docker compose -f deployments/docker-compose.yml down -v
+
+  http-kafka-outage-recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go mod download
+      - run: go mod verify
+      - name: Real HTTP → PG Ledger/Outbox → Kafka → ClickHouse recovery
+        run: bash scripts/m5a-http-recovery-smoke.sh
