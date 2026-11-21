@@ -51,6 +51,9 @@ func (w *HTTPWriter) Insert(ctx context.Context, events []event.UsageEvent) erro
     if db == "" { db = "telemetry" }
     q.Set("database", db)
     q.Set("async_insert", "0")
+    // Explicitly override untrusted endpoint params. The consumer must not
+    // ACK a Kafka offset based on an async-buffer acceptance response.
+    q.Set("wait_for_async_insert", "1")
     q.Set("wait_end_of_query", "1")
     u.RawQuery = q.Encode()
     var buf bytes.Buffer
