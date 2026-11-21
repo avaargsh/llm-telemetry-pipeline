@@ -143,3 +143,50 @@ All three must pass. Repeating successful runs improves confidence but
 is permanently solved**, guarantee a bounded RTO, or establish production
 Kafka HA. Retain Issue #28 until its quorum-loss failure mechanism is
 reproduced and distinguished from the client reconnect issue.
+
+## M3b-P2: Fail-closed quorum status versus partition ISR recovery evidence
+
+Historical Issue #28 includes genuine failures after controller restart in
+which KRaft VOTE requests carried target voter IDs different from the
+receiving broker's persisted node identity, while the partition remained
+stuck below ISR=3. This is **not** explained by the separately fixed stale
+producer bootstrap path (#37). Until there is a controlled reproduction
+comparing before/after identity and quorum state, do not assert the Kafka
+root cause.
+
+The lab now records an independent, exact-test-code-HEAD timeline to
+`/tmp/m3b-kraft-recovery-timeline.json` for every real fault experiment.
+The test saves this receipt even on a `t.Fatal`/partial recovery. Incomplete
+evidence has `result=INCOMPLETE`, never `PASS`. The successful receipt
+requires *all eight* ordered observations:
+
+1. Two combined broker/controller nodes stopped (no inferred ISR).
+2. Broker write has **no ACK** during quorum loss (append outcome UNKNOWN).
+3. First voter process restarted.
+4. Actual `kafka-metadata-quorum.sh describe --status` observation has a
+   parseable controller LeaderId, HighWatermark and CurrentVoters. This is the
+   **time the status was observed**, not the exact instant quorum formed.
+5. Fresh Kafka partition metadata verifies the *intermediate ISR=2*.
+6. Second voter process restarted.
+7. Fresh Kafka partition metadata verifies *final ISR=3*.
+8. All 35 previously broker-ACKed Event IDs are reread and validated.
+
+The receipt reports distinct sampled durations from first restart to first
+valid KRaft quorum status, first restart to ISR2, second restart to ISR3,
+and two-voter-loss to completed acknowledged readback. All measurements come
+from the same Go process's monotonic clock. This does **not** estimate a
+production RTO, prove voter-key mismatch is resolved, or turn CLI
+availability into Kafka client availability.
+
+A missing, duplicated, out-of-order, non-monotonic or unverifiable milestone
+must fail the independent timeline gate. The existing Topic minISR
+NotEnoughReplicas assertion, final RF3/ISR3 assertion and broker ACK
+replay checks are unchanged. The real CI workflows attach both the timeline
+and separate sanitized voter identity/DNS/quorum snapshots for each run,
+including failures where available.
+
+Release and incident review must **not** close Issue #28 merely because
+the lab eventually reports ISR3 in a few trials. Comparing the KRaft voter
+IDs in logged requests with broker persisted metadata, controller quorum
+HighWatermark, DNS and elapsed ISR catch-up across multiple fixed-image runs
+remains the outstanding investigation.
