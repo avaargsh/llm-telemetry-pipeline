@@ -119,3 +119,12 @@ m8-sustained-smoke:
 # Disposable physical streaming standby and manual promotion fault proof.
 m7-postgres-ha-smoke:
 	bash scripts/m7-pgha-failover-smoke.sh
+
+.PHONY: m9-pg-ha-sustained-smoke m9-pg-ha-sustained-tests
+
+# M9: sustained open-loop requests across real PG SIGKILL + manual promotion.
+m9-pg-ha-sustained-smoke:
+	bash scripts/m9-pgha-sustained-smoke.sh
+
+m9-pg-ha-sustained-tests:
+	python3 -m unittest discover -s scripts -p 'test_m9_failover.py' -v
