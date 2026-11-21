@@ -1,6 +1,24 @@
 name: m8-sustained-p95-p99-slo
 on:
   pull_request:
+    paths:
+      - ".github/workflows/m8-sustained.yml"
+      - "scripts/m5_benchmark.py"
+      - "scripts/m5-performance-smoke.sh"
+      - "scripts/m8_slo_eval.py"
+      - "scripts/m8-sustained-smoke.sh"
+      - "scripts/test_m8_sustained.py"
+      - "cmd/outbox-relay/**"
+      - "cmd/usage-ingest-api/**"
+      - "cmd/ingest-worker/**"
+      - "internal/clickhouse/**"
+      - "internal/ledger/**"
+      - "internal/outbox/**"
+      - "internal/ingest/**"
+      - "internal/ingestapi/**"
+      - "deployments/docker-compose.yml"
+      - "go.mod"
+      - "go.sum"
   workflow_dispatch:
 jobs:
   real-steady-load-profile:
@@ -22,6 +40,11 @@ jobs:
           M8_DURATION_SECONDS: "45"
           M8_COUNT: "1125"
           M8_RELAY_BATCH_TIMEOUT: "5ms"
+          M8_MAX_ACK_P95_MS: "500"
+          M8_MAX_ACK_P99_MS: "750"
+          M8_MAX_VISIBLE_P95_MS: "5000"
+          M8_MAX_VISIBLE_P99_MS: "8000"
+          M8_MAX_SCHEDULE_LAG_P99_MS: "100"
           M8_OUTPUT_DIR: artifacts/m8-sustained
         run: bash scripts/m8-sustained-smoke.sh
       - name: Archive per-trial P95/P99 and PG/Kafka/ClickHouse host evidence

@@ -99,3 +99,50 @@ Before publishing a service SLO, add a controlled hardware environment,
 durable Kafka/PG HA profiles, at least three runs per load level, percentile
 confidence/uncertainty, error-budget accounting across calendar windows, real
 failure injection and verified end-to-end workload tracing.
+
+
+## Verified first CI profile and candidate regression gate
+
+[Exact-head real M8 baseline run 44865577833](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/44865577833)
+passed 19/19 full PR workflows, including the three sustained-load trials and
+raw ZIP artifact `m8-sustained-p95-p99-evidence`.
+
+| Metric | Trial 1 | Trial 2 | Trial 3 |
+| --- | ---: | ---: | ---: |
+| HTTP ACKed / trusted visible | 1,125 / 1,125 | 1,125 / 1,125 | 1,125 / 1,125 |
+| Accepted events/s | 25.02 | 25.02 | 25.02 |
+| HTTP ACK P95 ms | 2.26 | 2.17 | 2.21 |
+| HTTP ACK P99 ms | 3.13 | 3.37 | 3.16 |
+| CH first-observed P95 ms | 2349.76 | 3382.20 | 3365.57 |
+| Drain s | 0.698 | 0.709 | 0.700 |
+
+The separate aggregated report records **worst CH first-observed P99 =
+5182.21 ms** and worst client pacing lag P99 = **0.52 ms**.
+The original run's `slo=NOT_SET`: passing correctness did not silently
+create an SLO.
+
+Based on those observations, the dedicated M8 CI job now defines an **isolated
+scenario regression gate** (not a production SLA) at fixed **25 target RPS,
+45 seconds/trial, 1,125 events/trial, 3 trials**, and only on the indicated
+single-broker/single-PostgreSQL/single-ClickHouse GitHub Runner:
+
+| Per-trial worst-run ceiling | Candidate CI gate |
+| --- | ---: |
+| HTTP ACK P95 | 500 ms |
+| HTTP ACK P99 | 750 ms |
+| Trusted CH first-observed visibility P95 | 5000 ms |
+| Trusted CH first-observed visibility P99 | 8000 ms |
+| Client open-loop scheduling lag P99 | 100 ms |
+
+A pass **requires all three** complete trials to meet all five metrics, plus
+the existing data-integrity and offered-load validity checks. A single
+missed ceiling is a failed performance CI job. This is a deliberately loose
+first regression budget, not an externally promised customer SLO, statistical
+confidence interval, or a bound under database/Kafka failure.
+
+To avoid running 3×45-second disposable full stacks for pure documentation
+changes, the workflow triggers on relevant ingestion, Relay, ledger/Outbox,
+Kafka/ClickHouse Writer, benchmark, Docker, and Go dependency paths, plus
+manual workflow dispatch. The integration tests are still available for
+an intentional repeat/profile check. Cross-hardware results are not comparable
+without normalization.
