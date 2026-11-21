@@ -1,0 +1,72 @@
+# Example only. Replace image with a verified digest-pinned build, provision
+# a read-only DB credential Secret named telemetry-reconcile-secrets, and
+# explicitly configure K8s Job-failure alerting before scheduling.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: llm-telemetry-reconciler
+  labels:
+    app.kubernetes.io/name: llm-telemetry-reconciler
+spec:
+  schedule: "15 * * * *"
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  failedJobsHistoryLimit: 8
+  successfulJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 150
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: llm-telemetry-reconciler
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: reconcile
+              # REQUIRED: replace before deploying. No image is distributed.
+              image: REPLACE_WITH_DIGEST_PINNED_IMAGE
+              imagePullPolicy: IfNotPresent
+              args:
+                - "--window-minutes"
+                - "60"
+                - "--lag-minutes"
+                - "15"
+                - "--max-records"
+                - "1000"
+                - "--grace"
+                - "3m"
+                - "--output"
+                - "/tmp/m6-reconciliation.json"
+              envFrom:
+                - secretRef:
+                    name: telemetry-reconcile-secrets
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 128Mi
+                limits:
+                  cpu: "1"
+                  memory: 256Mi
+              volumeMounts:
+                - name: ephemeral-report
+                  mountPath: /tmp
+          volumes:
+            - name: ephemeral-report
+              emptyDir:
+                sizeLimit: 16Mi
