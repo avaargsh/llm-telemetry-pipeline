@@ -94,3 +94,9 @@ m6-scheduled-reconcile-tests:
 # Disposable PostgreSQL/ClickHouse reconciliation PASS and FAIL evidence lab.
 m6-scheduled-reconcile-smoke:
 	bash scripts/m6-reconcile-smoke.sh
+
+.PHONY: m7-postgres-ha-smoke
+
+# Disposable physical streaming standby and manual promotion fault proof.
+m7-postgres-ha-smoke:
+	bash scripts/m7-pgha-failover-smoke.sh
