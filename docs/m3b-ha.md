@@ -371,3 +371,63 @@ bash scripts/m3b-kraft-parallel-smoke.sh
 
 Results are bounded to this disposable single-runner KRaft fault lab, not
 Kafka production HA, RTO, JVM DNS health or arbitrary network conditions.
+
+## Controlled network-endpoint A/B: pinned vs dynamic Docker IPAM
+
+[Issue #28](https://github.com/avaargsh/llm-telemetry-pipeline/issues/28)
+now has real before/after Kafka voter identity, sanitized wrong-target VOTE logs,
+and kernel-level namespace TCP peer observations from the merged #40–#43
+evidence chain. Those measurements still do not prove why the historical
+voter-key mismatch reached the wrong receiver.
+
+A *separate* experiment uses the **identical Go dual-controller fault
+test** under two isolated Docker Compose network profiles:
+
+| Profile | Compose file | Changed variable |
+|---|---|---|
+| `pinned` | `deployments/docker-compose-ha.yml` | Fixed container IPs 172.29.241.11–13 |
+| `dynamic` | `deployments/docker-compose-ha-dynamic.yml` | Original dynamic Docker IP assignment, no static subnet |
+
+All other Kafka image/version, static quorum voter IDs, named volume
+persistence, topic RF3/minISR, broker-required ACKs, UNKNOWN-no-ACK fault,
+quorum-status observation, final ISR3 and 35 prior ACKed ID readback
+requirements are shared. The profile is selected only with the
+`M3B_HA_COMPOSE_FILE` and `M3B_NETWORK_AB_MODE` test environment variables;
+defaults remain pinned.
+
+The dynamic profile **may show** IP swaps or cross-target voter-key events;
+those are not suppressed. The redacted A/B evidence classifies a recovered
+experiment with changed IPs as `RECOVERY_VERIFIED_ENDPOINTS_DYNAMIC_OBSERVED`,
+*not* clean Kafka HA. Pinned runs continue to reject any IP drift or
+voter-key mismatch. Both profiles fail if persisted Kafka identity changes,
+Docker DNS is inconsistent on the final snapshot, quorum-loss receives an
+ACK, final ISR3 is missing, or 35/35 previously ACKed records cannot be
+verified. Any failed recovery produces an `INCOMPLETE` receipt, not an
+invented green result.
+
+Independent evidence artifacts include the real Kafka recovery receipt,
+before/after Docker-voter identity snapshots, a sanitized VOTE target count,
+and the actual kernel TCP controller peers during both-voter restart.
+`m3b_network_ab_evidence.py` reports any IP address reassigned from one
+broker to another, while explicitly retaining
+`causal_root_cause_proven=false`.
+
+```bash
+python3 -m unittest discover -s scripts -p 'test_m3b_network_ab_evidence.py' -v
+M3B_NETWORK_AB_MODE=pinned \
+M3B_HA_COMPOSE_FILE=deployments/docker-compose-ha.yml \
+bash scripts/m3b-kraft-parallel-smoke.sh
+M3B_NETWORK_AB_MODE=dynamic \
+M3B_HA_COMPOSE_FILE=deployments/docker-compose-ha-dynamic.yml \
+bash scripts/m3b-kraft-parallel-smoke.sh
+```
+
+**Interpretation boundary:** independent CI runners can differ in scheduling
+and fault timing; each profile is initially run once as a **diagnostic
+comparison**, not a statistically supported performance ranking.
+A dynamic-vs-pinned difference strengthens or weakens the address-reuse
+hypothesis but is not proof of the JVM's actual DNS cache or intended voter
+target at message send time. If either experiment cannot finish the real
+Kafka recovery, it remains a visible failed experiment rather than being
+declared a passing HA release. Keep Issue #28 open until causality is
+verified. No production IPAM, HA SLO or Apache Kafka defect claims.
