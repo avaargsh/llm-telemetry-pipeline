@@ -186,7 +186,16 @@ func haProbeQuorumLossAndRestore(t *testing.T,ctx context.Context,seed string,
  }
  failure:=err.Error()
  t.Logf("no ACK during loss of 2/3 controller+broker nodes; unconfirmed append possible: %s",failure)
- haCompose(t,ctx,append([]string{"start"},stopped...)...)
+ // Restore one voter first. Once the original leader plus one restarted
+ // voter re-establish the controller majority and ISR=2, start the final
+ // voter. Starting both stopped KRaft controllers simultaneously caused
+ // cross-target VOTE requests (INVALID_VOTER_KEY) in the isolated CI cluster;
+ // staged recovery keeps the same 2/3 quorum-loss assertion while making
+ // controller membership convergence observable at each step.
+ haCompose(t,ctx,"start",stopped[0])
+ intermediate:=haWaitPartition(t,ctx,2,-1)
+ if err:=RequireReplicaAndISR(intermediate,3,2);err!=nil{t.Fatal(err)}
+ haCompose(t,ctx,"start",stopped[1])
  recovered:=haWaitPartition(t,ctx,3,-1)
  if err:=RequireReplicaAndISR(recovered,3,3);err!=nil{t.Fatal(err)}
  got:=haReadAcknowledged(t,ctx,previousACKs)

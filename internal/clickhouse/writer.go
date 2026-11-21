@@ -51,6 +51,9 @@ func (w *HTTPWriter) Insert(ctx context.Context, events []event.UsageEvent) erro
     if db == "" { db = "telemetry" }
     q.Set("database", db)
     q.Set("async_insert", "0")
+    // Explicitly override untrusted endpoint params. The consumer must not
+    // ACK a Kafka offset based on an async-buffer acceptance response.
+    q.Set("wait_for_async_insert", "1")
     q.Set("wait_end_of_query", "1")
     u.RawQuery = q.Encode()
     var buf bytes.Buffer
@@ -77,7 +80,9 @@ func (w *HTTPWriter) Insert(ctx context.Context, events []event.UsageEvent) erro
     defer resp.Body.Close()
     body, readErr := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
     if readErr != nil { return fmt.Errorf("ClickHouse response incomplete; outcome unknown: %w", readErr) }
-    if resp.StatusCode < 200 || resp.StatusCode >= 300 || strings.Contains(string(body), "Code: ") {
+    // Do not treat a generic 2xx (especially 202 Accepted) as storage
+    // confirmation: the Kafka consumer requires a completed SQL response.
+    if resp.StatusCode != http.StatusOK || strings.Contains(string(body), "Code: ") {
         return fmt.Errorf("ClickHouse insert returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
     }
     return nil
