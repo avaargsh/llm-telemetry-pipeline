@@ -13,7 +13,7 @@ M5_COUNT=128 M5_CONCURRENCY=4 M5_PARTITIONS=6 M5_BATCH_SIZE=32 \
   bash scripts/m5-performance-smoke.sh
 ```
 
-The script starts real PostgreSQL 17, Kafka 4.1 (single broker, RF=1), ClickHouse 25.8, the Go HTTP ingestion server, Relay and Consumer. It creates three topics with exactly `M5_PARTITIONS` partitions (the whole Compose project is fresh), generates unique sealed events and per-scope random temporary credentials, then submits concurrent authenticated requests. The benchmark polls a **trusted de-duplicated analytical view**, records the first time each event becomes visible and writes `artifacts/m5-performance.json`.
+The script starts real PostgreSQL 17, Kafka 4.1 (single broker, RF=1), ClickHouse 25.8, the Go HTTP ingestion server, Relay and Consumer. It creates three topics with exactly `M5_PARTITIONS` partitions (the whole Compose project is fresh), generates unique sealed events and per-scope random temporary credentials, then submits concurrent authenticated requests. The benchmark polls a **trusted de-duplicated analytical view**, records the first time each event becomes visible and writes a JSON receipt under `artifacts/`.
 
 CI uses a tiny 128-event **correctness smoke** so results are reproducible and reviewers get raw evidence. It is neither a throughput maximum nor a production-grade statistical performance claim. To compare loads, use **separate clean runs**, for example:
 
@@ -93,3 +93,15 @@ python3 scripts/m5_compare.py \
 ```
 
 The comparator rejects incomplete/failed correctness experiments, missing metrics and invalid JSON. It prints HTTP P95/P99, sampled CH visibility P95/P99, drain, RPS and a throughput factor relative to the first receipt. Different count, concurrency, partition or batch settings are prominently labeled **profiles, not controlled before/after optimization evidence**. For true tuning claims, rerun the same profile and hardware before and after the change, repeat trials and show variation.
+
+## Relay Kafka batching latency experiment
+
+The Relay previously used a fixed Kafka writer `BatchTimeout=100ms` with synchronous `WriteMessages` for individual events. This can introduce approximately one wait interval per message without affecting HTTP transaction latency. M5 now exposes bounded `--kafka-batch-timeout` (default 100ms) and `--claim-limit` (default 5), preserving previous defaults and ACK-before-MarkPublished semantics.
+
+M5 CI runs two isolated 128-event profiles sequentially on the same hosted runner: 100ms baseline and 5ms tuned. Both require complete Ledger-to-ClickHouse correctness. The CI archives `m5-baseline.json`, `m5-tuned.json` and `m5-comparison.md`. Shared-host noise, separate Compose restarts, and cold-start effects remain confounders: this is exploratory, not an established production improvement factor.
+
+```bash
+M5_RELAY_BATCH_TIMEOUT=100ms M5_OUTPUT=artifacts/relay-baseline.json make m5-performance-smoke
+M5_RELAY_BATCH_TIMEOUT=5ms M5_OUTPUT=artifacts/relay-tuned.json make m5-performance-smoke
+python3 scripts/m5_compare.py artifacts/relay-baseline.json artifacts/relay-tuned.json
+```
