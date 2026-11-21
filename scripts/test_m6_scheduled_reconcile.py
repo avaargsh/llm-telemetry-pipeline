@@ -39,12 +39,17 @@ class ReportTests(unittest.TestCase):
         self.start = dt.datetime(2026, 11, 21, 11, 22, tzinfo=UTC)
         self.end = dt.datetime(2026, 11, 21, 12, 22, tzinfo=UTC)
 
-    def report(self, result="PASS"):
+    def report(self, result="FAIL"):
+        counts = {"matched": 7, "missing": 0, "pending": 0}
+        if result == "FAIL":
+            counts = {"matched": 6, "missing": 1, "pending": 0}
+        elif result == "INCOMPLETE":
+            counts = {"matched": 6, "missing": 0, "pending": 1}
         return {
             "schema_version": 1, "start": self.start.isoformat(),
             "end": self.end.isoformat(), "result": result,
             "ledger_events": 7, "analytics_events": 5,
-            "counts": {"matched": 1, "missing": 1},
+            "counts": counts,
             "findings": [{"event_id": "sensitive-id", "reason": "private"}]
         }
 
