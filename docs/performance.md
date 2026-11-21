@@ -80,3 +80,16 @@ A JSON report with `slo=PASS` applies **only** to its fixed scenario and specifi
 | Production load SLO | requires real hardware and repeated observations | **Not established** |
 
 Raw results are intentionally **not** prefilled with invented throughput/latency values. Distinguish acceptance correctness, first visibility, and business accounting in all reports.
+
+
+## Comparing actual observations
+
+Once there are at least two **complete** receipts, generate a Markdown profile comparison without inventing numbers:
+
+```bash
+python3 scripts/m5_compare.py \
+  artifacts/m5-c1-p1-b16.json artifacts/m5-c8-p6-b64.json \
+  --output artifacts/m5-profile-comparison.md
+```
+
+The comparator rejects incomplete/failed correctness experiments, missing metrics and invalid JSON. It prints HTTP P95/P99, sampled CH visibility P95/P99, drain, RPS and a throughput factor relative to the first receipt. Different count, concurrency, partition or batch settings are prominently labeled **profiles, not controlled before/after optimization evidence**. For true tuning claims, rerun the same profile and hardware before and after the change, repeat trials and show variation.
