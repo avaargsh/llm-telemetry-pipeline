@@ -279,3 +279,49 @@ reproduced old failure rescued by controlled endpoint stabilization.
 Keep [Issue #28](https://github.com/avaargsh/llm-telemetry-pipeline/issues/28)
 open for that independent root-cause verification; do not claim a production
 Kafka HA or recovery-time guarantee.
+
+## P0 falsification: restore *two* stopped KRaft voters without an ISR2 wait
+
+Prior staged recovery starts the first voter, waits for real metadata quorum
+status and ISR2, then starts the second voter. Earlier failed CI logs (Issue
+#28) instead exhibited cross-target voter-key errors during controller
+restart. That failure envelope is not covered by only staged tests.
+
+A **separate**, disposable experiment now runs the more aggressive startup:
+
+```bash
+python3 -m unittest discover -s scripts -p 'test_m3b_parallel_proof.py' -v
+bash scripts/m3b-kraft-parallel-smoke.sh
+# /tmp/m3b-parallel-restart-report.json
+# /tmp/m3b-parallel-kraft-diagnostics/{before_fault,after_success,voter-identity-audit}.json
+```
+
+The experiment requires: real RF3/ISR3 and **35 broker-ACKed sealed events
+before** fault; stop both nonleader combined broker/controllers with named
+volumes intact; verify the surviving leader does **not** ACK a new write
+(its append result is UNKNOWN, not asserted absent); request startup of
+**both stopped services in one Docker Compose `start` invocation** without an
+ISR2 wait between them; independently observe real quorum CLI LeaderId and
+HighWatermark; wait for fresh partition metadata RF3/ISR3; then replay and
+verify all 35 prior ACKs byte-identically. The exact-HEAD JSON verifier
+rejects missing/contradictory fields or out-of-order monotonic timings.
+
+The runner also collects before/after identity and Docker DNS snapshots and
+a sanitized bounded wrong-target VOTE count. Every failed test archives
+`INCOMPLETE` evidence when the Go process was reached, plus read-only
+diagnostics before volume cleanup. **No Kafka metadata reset, forced leader,
+RF downgrade, or automatic rewind is permitted.**
+
+CI `m3b-parallel-kraft-voter-recovery` runs three independent trial jobs;
+it is separate from the existing staged-recovery CI and cannot replace those
+strict gates. Docker Compose may schedule individual process starts at
+slightly different instants: a *single Compose command* is verified, **not
+nanosecond-accurate simultaneous JVM bootstrap**.
+
+Results from a fixed-IP environment can establish that the tested parallel
+restart envelope did (or did not) recover; they **cannot alone prove** that
+old cross-target VOTE errors were caused by JVM DNS caching. A controlled
+unfixed-endpoint comparator (without weakening ACK safety or deleting
+persistent volumes during recovery) and actual in-process resolved address
+evidence are still needed for definitive causal attribution. All timing
+fields are observation times, **not production RTO**.

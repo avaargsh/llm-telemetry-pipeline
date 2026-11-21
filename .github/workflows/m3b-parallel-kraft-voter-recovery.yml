@@ -1,0 +1,62 @@
+name: m3b-parallel-kraft-voter-recovery
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/m3b-parallel-kraft-voter-recovery.yml"
+      - "internal/kafkaha/**"
+      - "scripts/m3b-kraft-parallel-smoke.sh"
+      - "scripts/m3b_parallel_proof.py"
+      - "scripts/test_m3b_parallel_proof.py"
+      - "scripts/m3b_kraft_diagnostics.py"
+      - "scripts/m3b_kraft_audit.py"
+      - "deployments/docker-compose-ha.yml"
+  workflow_dispatch:
+jobs:
+  parallel-voter-restart:
+    name: real-parallel-two-voter-restart-trial-${{ matrix.trial }}
+    strategy:
+      fail-fast: false
+      matrix:
+        trial: [1, 2, 3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Confirm tested exact HEAD
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go mod download && go mod verify
+      - name: Fail-closed oracle and diagnostic unit tests
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_m3b_parallel_proof.py' -v
+          python3 -m unittest discover -s scripts -p 'test_m3b_kraft_audit.py' -v
+          python3 -m unittest discover -s scripts -p 'test_m3b_kraft_diagnostics.py' -v
+          go test -count=1 ./internal/kafkaha
+      - name: Real simultaneous-start two-controller quorum-loss fault
+        env:
+          M3B_KRAFT_DIAGNOSTICS_DIR: /tmp/m3b-parallel-kraft-diagnostics
+          M3B_PARALLEL_REPORT_PATH: /tmp/m3b-parallel-restart-report.json
+        run: bash scripts/m3b-kraft-parallel-smoke.sh
+      - name: Archive partial or full Kafka ACK and quorum evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m3b-parallel-kraft-recovery-trial-${{ matrix.trial }}
+          path: /tmp/m3b-parallel-restart-report.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Archive identity and DNS comparison, including incomplete failure receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m3b-parallel-kraft-diagnostics-trial-${{ matrix.trial }}
+          path: /tmp/m3b-parallel-kraft-diagnostics/*.json
+          if-no-files-found: warn
+          retention-days: 14
