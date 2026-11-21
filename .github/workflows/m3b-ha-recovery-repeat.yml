@@ -1,0 +1,58 @@
+name: m3b-kraft-recovery-repeated-evidence
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/m3b-ha-recovery-repeat.yml"
+      - "internal/kafkaha/**"
+      - "scripts/m3b-ha-smoke.sh"
+      - "scripts/m3b_kraft_diagnostics.py"
+      - "scripts/test_m3b_kraft_diagnostics.py"
+      - "deployments/docker-compose-ha.yml"
+  workflow_dispatch:
+jobs:
+  recovery-trial:
+    name: independent-kraft-recovery-trial-${{ matrix.trial }}
+    strategy:
+      fail-fast: false
+      matrix:
+        trial: [1, 2, 3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go mod download && go mod verify
+      - name: Confirm test branch exact HEAD
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Validate live-broker endpoint selection and read-only quorum diagnostics
+        run: |
+          go test -count=1 ./internal/kafkaha
+          python3 -m unittest discover -s scripts -p 'test_m3b_kraft_diagnostics.py' -v
+      - name: Exercise real leader failover, minISR refusal, quorum loss and staged recovery
+        env:
+          M3B_HA_REPORT_PATH: /tmp/m3b-kafka-ha-report.json
+          M3B_KRAFT_DIAGNOSTICS_DIR: /tmp/m3b-kraft-diagnostics
+        run: bash scripts/m3b-ha-smoke.sh
+      - name: Archive full independent trial report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m3b-recovery-report-trial-${{ matrix.trial }}
+          path: /tmp/m3b-kafka-ha-report.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Preserve before/failure/success identity, DNS and quorum snapshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m3b-recovery-diagnostics-trial-${{ matrix.trial }}
+          path: /tmp/m3b-kraft-diagnostics/*.json
+          if-no-files-found: error
+          retention-days: 14

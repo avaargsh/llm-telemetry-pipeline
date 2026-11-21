@@ -66,6 +66,9 @@ assert r["isr_after_failure"]==2 and r["isr_after_recovery"]==3,r
 assert r["insufficient_isr_probe_min_isr"]==3 and r["insufficient_isr_probe_isr"]==2,r
 assert r["broker_acknowledged_ids"]==35,r
 assert r["readback_records"]>=35 and r["all_acknowledged_verified"] is True,r
+assert r["stale_bootstrap_probe_error"],r
+assert r["rebootstrap_same_event_id_ack"] is True,r
+assert r["rebootstrap_live_isr_size"]==2,r
 assert r["quorum_loss_tested"] is True,r
 assert r["acknowledged_ids_verified_after_quorum_restore"] is True,r
 assert r["quorum_loss_producer_error"],r
