@@ -46,3 +46,22 @@ func TestInsertOverridesUnsafeAsyncEndpointSettings(t *testing.T) {
         t.Fatal("ClickHouse HTTP sink was not exercised")
     }
 }
+
+
+// An HTTP proxy (or future ClickHouse mode) might return "202 Accepted"
+// before a durable insert completes. Only HTTP 200 is currently a confirmed
+// SQL ACK for this writer; it must not treat any generic 2xx as committed.
+func TestInsertRejectsUnconfirmedHTTP2xxStatuses(t *testing.T) {
+    for _, status := range []int{http.StatusCreated, http.StatusAccepted, http.StatusNoContent} {
+        t.Run(http.StatusText(status), func(t *testing.T) {
+            server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+                w.WriteHeader(status)
+            }))
+            defer server.Close()
+            sink := &HTTPWriter{Endpoint: server.URL}
+            if err := sink.Insert(context.Background(), []event.UsageEvent{testEvent(t)}); err == nil {
+                t.Fatalf("unconfirmed HTTP %d was accepted as a ClickHouse durability ACK", status)
+            }
+        })
+    }
+}
