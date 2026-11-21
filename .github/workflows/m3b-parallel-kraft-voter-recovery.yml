@@ -37,6 +37,7 @@ jobs:
       - run: go mod download && go mod verify
       - name: Fail-closed oracle and diagnostic unit tests
         run: |
+          bash -n scripts/m3b-kraft-parallel-smoke.sh
           python3 -m unittest discover -s scripts -p 'test_m3b_parallel_proof.py' -v
           python3 -m unittest discover -s scripts -p 'test_m3b_controller_sockets.py' -v
           python3 -m unittest discover -s scripts -p 'test_m3b_kraft_audit.py' -v
