@@ -16,7 +16,7 @@ if [[ ! -s "$PGDATA/PG_VERSION" ]]; then
     sleep 2
   done
 fi
-if [[ ! -s "$PGDATA/standby.signal" ]]; then
+if [[ ! -f "$PGDATA/standby.signal" ]]; then
   echo 'standby bootstrap missing standby.signal; fail closed' >&2
   exit 1
 fi
