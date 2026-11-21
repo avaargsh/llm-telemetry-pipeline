@@ -238,3 +238,44 @@ A bounded log tail can also miss older events. Therefore
 cross-target mismatch; it is not a root-cause exclusion or production HA
 claim. Compare anomalous logs and snapshots before changing any cluster
 configuration.
+
+## Controlled Docker endpoint-stability experiment (Issue #28)
+
+PR #40's exact-HEAD fault trials exposed an actual test-harness instability:
+during otherwise successful staged quorum recovery, Docker reassigned container
+IPv4 addresses. In trial 1, broker2/broker3 exchanged their .3/.2 addresses;
+in trial 2, they exchanged .4/.2; a third independent trial changed broker1
+and broker3. Post-restart `getent` DNS and persisted `node.id` /
+`cluster.id` / `directory.id` were consistent, and no cross-target VOTE
+mismatch was observed in those successful recovery log samples.
+
+The **experiment-only** Compose file now attaches the three
+`apache/kafka:4.1.0` combined-role voters to an explicitly configured
+private Docker network with stable addresses:
+
+| Kafka voter | Fixed Docker IPv4 | Controller listener |
+|---|---|---|
+| broker1 / node.id=1 | 172.29.241.11 | broker1:9093 |
+| broker2 / node.id=2 | 172.29.241.12 | broker2:9093 |
+| broker3 / node.id=3 | 172.29.241.13 | broker3:9093 |
+
+This network is restricted to a disposable local/CI lab, is not production
+IPAM advice, and must not replace real network/security configuration. The
+KRaft static quorum IDs and all existing ACK, RF3/ISR3, minISR, quorum-loss,
+readback and exact-head evidence checks remain unchanged. The audit now
+**fails closed** on any container IPv4 change even when the post-restart DNS
+eventually resolves consistently; a regression unit test first reproduced
+the earlier false `NO_MISMATCH_OBSERVED` classification on swapped IPs.
+
+**What this experiment can establish:** Docker-assigned voter addresses stayed
+stable across the tested stop/start fault windows, and all existing real
+Kafka recovery assertions passed.
+
+**What it cannot establish:** The Kafka JVM previously cached a wrong voter
+address, or all historical cross-target VOTE errors originated from Docker IP
+reuse. That would require evidence of the JVM's effective resolved peer
+endpoint at the time it sent the wrong VOTE request, or an independently
+reproduced old failure rescued by controlled endpoint stabilization.
+Keep [Issue #28](https://github.com/avaargsh/llm-telemetry-pipeline/issues/28)
+open for that independent root-cause verification; do not claim a production
+Kafka HA or recovery-time guarantee.
