@@ -15,7 +15,7 @@ jobs:
       - run: go mod download
       - run: go mod verify
       - name: M5 deterministic reporting and SLO contract unit tests
-        run: python3 -m unittest discover -s scripts -p 'test_m5_benchmark.py' -v
+        run: python3 -m unittest discover -s scripts -p 'test_m5_*.py' -v
       - name: Isolated real Kafka / PG / CH correctness profile (not an SLO pass)
         env:
           M5_COUNT: "128"
