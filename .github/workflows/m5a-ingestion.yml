@@ -46,4 +46,14 @@ jobs:
       - run: go mod download
       - run: go mod verify
       - name: Real HTTP → PG Ledger/Outbox → Kafka → ClickHouse recovery
+        env:
+          M5A_EVIDENCE_PATH: artifacts/m5a-http-recovery.json
         run: bash scripts/m5a-http-recovery-smoke.sh
+      - name: Publish fault/recovery JSON evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m5a-http-kafka-recovery-evidence
+          path: artifacts/m5a-http-recovery.json
+          if-no-files-found: error
+          retention-days: 14
