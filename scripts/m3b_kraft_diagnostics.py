@@ -20,7 +20,7 @@ META_KEYS = frozenset(("node.id", "cluster.id", "directory.id"))
 QUORUM_KEYS = frozenset(("ClusterId", "LeaderId", "LeaderEpoch",
                          "HighWatermark", "CurrentVoters", "CurrentObservers",
                          "MaxFollowerLag", "MaxFollowerLagTimeMs"))
-COMPOSE = ("docker", "compose", "-f", "deployments/docker-compose-ha.yml")
+COMPOSE = ("docker", "compose", "-f", os.getenv("M3B_HA_COMPOSE_FILE", "deployments/docker-compose-ha.yml"))
 
 
 def parse_properties(raw):
