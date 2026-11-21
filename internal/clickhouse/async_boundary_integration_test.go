@@ -117,9 +117,9 @@ func TestRealClickHouseAsyncACKBoundary(t *testing.T) {
     for k,v := range options { strict[k] = append([]string(nil), v...) }
     strict.Set("wait_for_async_insert", "1")
     waited := exec(fmt.Sprintf(
-        "INSERT INTO telemetry.%s FORMAT JSONEachRow
+        `INSERT INTO telemetry.%s FORMAT JSONEachRow
 {"event_id":"waited","tokens":17}
-", table), strict)
+`, table), strict)
     if got := readCount("waited"); got != 1 {
         t.Fatalf("wait_for_async_insert=1 ACK did not imply query-visible row; count=%d", got)
     }
@@ -128,9 +128,9 @@ func TestRealClickHouseAsyncACKBoundary(t *testing.T) {
     for k,v := range options { fire[k] = append([]string(nil), v...) }
     fire.Set("wait_for_async_insert", "0")
     fastACK := exec(fmt.Sprintf(
-        "INSERT INTO telemetry.%s FORMAT JSONEachRow
+        `INSERT INTO telemetry.%s FORMAT JSONEachRow
 {"event_id":"fire_and_forget","tokens":19}
-", table), fire)
+`, table), fire)
     atACK := readCount("fire_and_forget")
     if atACK > 1 { t.Fatalf("unexpected duplicate data before retry: %d", atACK) }
 
