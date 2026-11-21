@@ -74,7 +74,9 @@ func ValidateRecoveryMilestones(steps []RecoveryMilestone)(RecoveryDurations,err
       return RecoveryDurations{},errors.New("monotonic recovery milestones out of order")
    }
  }
- if steps[0].ISR!=1||steps[1].ISR!=1||
+ // Stopped containers and an unacknowledged write do not establish a
+ // broker ISR size. ISR fields at these stages must remain NOT_OBSERVED.
+ if steps[0].ISR!=0||steps[1].ISR!=0||
     steps[3].LeaderID<1||steps[3].LeaderID>3||steps[3].HighWatermark<0||
     steps[4].ISR!=2||steps[4].LeaderID<1||
     steps[6].ISR!=3||steps[6].LeaderID<1||steps[7].AckedCount!=35{
