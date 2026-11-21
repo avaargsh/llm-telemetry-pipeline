@@ -50,5 +50,7 @@ The first request returns `201 {"event_id":"...","result":"created"}`. Resubmitt
 
 - `go test -race ./internal/ingestapi` covers auth, scope, strict JSON, tampering, size, conflict, duplicate, method safety, and fail-closed unknown DB outcomes.
 - `TEST_POSTGRES_DSN=... go test -count=1 -v ./internal/ingestapi` exercises a real PostgreSQL transaction and confirms exactly one Ledger row plus one Outbox row for create + duplicate + conflicting replay.
-- GitHub Actions `m5a-authenticated-ingestion` starts the repository's isolated PostgreSQL Compose service and runs this integration test.
-- Existing M1–M4 reliability tests must remain green before merging; **no real Kafka/ClickHouse E2E evidence is claimed solely by this API change**.
+- GitHub Actions `m5a-authenticated-ingestion` starts PostgreSQL and runs the API integration test, then a **separate** disposable full-path fault scenario: HTTP → authoritative PostgreSQL Ledger/Outbox while Kafka is stopped → Kafka recovery → Relay → ClickHouse trusted projection → read-only PG↔CH reconciler.
+- The full-path scenario submits 16 events across eight project-scoped credentials, checks one duplicate and two rejected requests, and verifies 16 Ledger + Outbox records during Kafka downtime and 16 reconciled events after recovery. It writes a commit/run-linked JSON artifact `m5a-http-kafka-recovery-evidence` containing no credentials.
+- Run locally with `make m5a-http-recovery-smoke`. It uses a separately named, disposable Docker Compose project and destroys that project's volumes on exit. Requires Docker, Go, curl, openssl and Python 3.
+- **Evidence boundary:** these results count only if the GitHub Actions job succeeds on the exact PR HEAD. This isolated local Docker test does not establish Kafka HA, PostgreSQL HA, live on-call delivery, sustained SLO, or exactly-once guarantees. Existing M1–M4 regression checks must also pass before merge.
