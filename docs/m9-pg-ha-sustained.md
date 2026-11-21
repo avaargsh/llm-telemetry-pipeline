@@ -49,12 +49,26 @@ The GitHub Actions artifact `m9-pg-ha-sustained-failover-evidence` contains:
   request counts, P95/P99 HTTP ACK for **successes by phase**, P95/P99
   first-observed ClickHouse visibility, schedule lag, initial unknowns resolved,
   and intervals around SIGKILL/promotion/re-routing.
+- `attempts.csv`: every HTTP attempt, including retries, with anonymized
+  ordinal, phase, status, monotonic scheduled/start/end times. No tokens or IDs.
+- `visibility.csv`: first observed ClickHouse visibility timestamps per
+  anonymized event ordinal; independent P99 recomputation is required.
 - `docker-stats.csv`: periodic PG/Kafka/CH CPU/memory snapshots.
 - `summary.json`: redacted, exact-HEAD strict reconciliation receipt.
 
 Private synthetic Event IDs and tokens are used during the test but are not
 uploaded with the artifact. The observer uses 0.5-second ClickHouse polling.
-A phase with no successful writes has `null` percentile, **never zero latency**.
+A phase with no successful writes has `null` HTTP ACK percentile, **never
+zero latency**. Phase-specific final confirmation and trusted ClickHouse
+visibility latency include initially failed requests and subsequent same-ID
+retries; the raw CSV must independently reproduce all visibility P99 values.
+The original immediate post-SIGKILL ACK can be from a transaction already
+in flight. Therefore `fault_boundary_ack_gap_s` is **not** an RTO, and
+`observed_write_interruption_bracket_s` (last pre-fault confirmed ACK
+to first confirmed post-routing ACK) and
+`maximum_observed_inter_ack_gap_s` are separately reported sample-based
+bounds. `post_last_ack_trusted_visibility_drain_s` is a polling-based
+downstream drain observation.
 The fault window consists of attempted requests, not successful-only sampling.
 Write interruption is an observed successful-ACK gap, not a guaranteed
 end-to-end maximum outage duration. All time deltas are from one CI host's
