@@ -1,6 +1,6 @@
 rule_files:
   - alert-rules.yml
-evaluation_interval: 30s
+evaluation_interval: 5s
 tests:
   - interval: 30s
     input_series:
@@ -62,4 +62,27 @@ tests:
               summary: "Kafka lag collector unavailable or reporting unknown evidence"
       - eval_time: 2m
         alertname: KafkaLagCollectorUnavailable
+        exp_alerts: []
+
+  # Regression: the real M4 topic offers only a ~50s Warning phase
+  # (retention 120s, safety margin 50s). A 30s rule interval plus
+  # for:30s can miss this phase depending on evaluation alignment.
+  - interval: 5s
+    input_series:
+      - series: 'llm_telemetry_kafka_retention_risk{group="g",topic="m4.alert.e2e.v1",partition="0",status="warning"}'
+        values: '0 0 0 0 1 1 1 1 1 1 1 1 1 1 0 0 0'
+    alert_rule_test:
+      - eval_time: 55s
+        alertname: KafkaRetentionWarning
+        exp_alerts:
+          - exp_labels:
+              group: g
+              topic: m4.alert.e2e.v1
+              partition: "0"
+              status: warning
+              severity: warning
+            exp_annotations:
+              summary: "Kafka estimated retention headroom entered early-warning window"
+      - eval_time: 1m10s
+        alertname: KafkaRetentionWarning
         exp_alerts: []
