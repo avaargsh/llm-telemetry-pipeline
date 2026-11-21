@@ -84,3 +84,13 @@ m5a-http-recovery-smoke:
 # Real Kafka ACK, simulated Relay crash before PG mark, fenced retry.
 m5b-outbox-crash-smoke:
 	bash scripts/m5b-relay-ack-crash-smoke.sh
+
+.PHONY: m6-scheduled-reconcile-tests m6-scheduled-reconcile-smoke
+
+# Deterministic UTC scheduler and redacted receipt contract unit tests.
+m6-scheduled-reconcile-tests:
+	python3 -m unittest discover -s scripts -p 'test_m6_scheduled_reconcile.py' -v
+
+# Disposable PostgreSQL/ClickHouse reconciliation PASS and FAIL evidence lab.
+m6-scheduled-reconcile-smoke:
+	bash scripts/m6-reconcile-smoke.sh
