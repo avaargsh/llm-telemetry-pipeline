@@ -78,3 +78,9 @@ m4-alert-e2e:
 # down, followed by Relay/ClickHouse recovery and strict reconciliation.
 m5a-http-recovery-smoke:
 	bash scripts/m5a-http-recovery-smoke.sh
+
+.PHONY: m5b-outbox-crash-smoke
+
+# Real Kafka ACK, simulated Relay crash before PG mark, fenced retry.
+m5b-outbox-crash-smoke:
+	bash scripts/m5b-relay-ack-crash-smoke.sh
