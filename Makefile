@@ -71,3 +71,9 @@ m4a-alert-smoke:
 # separate from the synthetic metric M4a delivery-layer test above.
 m4-alert-e2e:
 	bash scripts/m4-alert-delivery-smoke.sh
+
+.PHONY: m5b-outbox-crash-smoke
+
+# Real Kafka ACK, simulated Relay crash before PG mark, fenced retry.
+m5b-outbox-crash-smoke:
+	bash scripts/m5b-relay-ack-crash-smoke.sh
