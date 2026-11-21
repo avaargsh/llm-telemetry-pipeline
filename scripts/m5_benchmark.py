@@ -172,6 +172,8 @@ def main():
     ap.add_argument("--concurrency", type=int, default=4)
     ap.add_argument("--partitions", type=int, required=True)
     ap.add_argument("--batch-size", type=int, required=True)
+    ap.add_argument("--relay-claim-limit", type=int, required=True)
+    ap.add_argument("--relay-batch-timeout", required=True)
     ap.add_argument("--poll-seconds", type=float, default=0.5)
     ap.add_argument("--visibility-timeout", type=float, default=90)
     ap.add_argument("--pid", action="append", default=[], help="name:PID to sample /proc CPU+RSS")
@@ -184,6 +186,8 @@ def main():
         ap.error("seed must contain only ASCII letters/digits/-/_")
     if not 1 <= args.concurrency <= 128 or not 1 <= args.partitions <= 128 or not 1 <= args.batch_size <= 10000:
         ap.error("invalid concurrency, Kafka partitions or consumer batch size")
+    if not 1 <= args.relay_claim_limit <= 500 or not re.fullmatch(r"[1-9][0-9]*(?:ms|s)", args.relay_batch_timeout):
+        ap.error("invalid Relay claim limit or Kafka batch timeout")
     if not .1 <= args.poll_seconds <= 10 or not 1 <= args.visibility_timeout <= 1200:
         ap.error("invalid visibility polling limits")
     creds = json.loads(os.environ.get("USAGE_INGEST_CREDENTIALS_JSON", "[]"))
@@ -276,6 +280,8 @@ def main():
         "concurrency": args.concurrency,
         "partitions": args.partitions,
         "consumer_batch_size": args.batch_size,
+        "relay_claim_limit": args.relay_claim_limit,
+        "relay_batch_timeout": args.relay_batch_timeout,
         "acceptance_throughput_events_s": round(len(accepted) / window_s, 2),
         "ack_p50_ms": round(percentile(ack_ms, .50), 2) if ack_ms else None,
         "ack_p95_ms": round(percentile(ack_ms, .95), 2) if ack_ms else None,
