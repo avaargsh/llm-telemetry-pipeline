@@ -36,3 +36,7 @@ CI: `.github/workflows/m5-clickhouse-async.yml`, Artifact `m5-clickhouse-async-a
 - The current production consumer remains on forced synchronous `async_insert=0`. A future opt-in `wait_for_async_insert=1` writer requires separate timeout/unknown-ACK/replay and DLQ safety testing before production use.
 
 Merge gate: current exact PR HEAD Go/race/vet tests and real ClickHouse integration must be green; machine-readable JSON evidence must exist; M1–M5 required regression checks remain green.
+
+## HTTP status is part of the evidence contract
+
+The production `HTTPWriter` now accepts only **HTTP 200 OK** as a successful SQL response, not arbitrary 2xx responses. In particular, `202 Accepted` from an upstream proxy is not a ClickHouse flush acknowledgement. Additional unit regression tests reject 201, 202 and 204 and preserve the existing error/unknown-ACK fail-closed behavior. This does not eliminate uncertainty after a timeout or connection loss; the Consumer must still replay uncommitted Kafka messages.
