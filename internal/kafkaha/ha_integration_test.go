@@ -18,9 +18,16 @@ import (
 const haTopic="m3b.ha.critical.v1"
 var haBrokers=[]string{"127.0.0.1:39092","127.0.0.1:39093","127.0.0.1:39094"}
 
+// The test-only dynamic-IP control runs identical fault logic against a
+// distinct Docker Compose project. Production Kafka code never reads this.
+func haComposeFile() string {
+ if path:=os.Getenv("M3B_HA_COMPOSE_FILE");path!=""{return path}
+ return "deployments/docker-compose-ha.yml"
+}
+
 func haCompose(t *testing.T,ctx context.Context,args ...string)string{
  t.Helper()
- a:=append([]string{"compose","-f","deployments/docker-compose-ha.yml"},args...)
+ a:=append([]string{"compose","-f",haComposeFile()},args...)
  cmd:=exec.CommandContext(ctx,"docker",a...)
  // go test runs with the package directory as its working directory.
  cmd.Dir="../.."
@@ -203,7 +210,7 @@ func haQuorumStatusObserved(t *testing.T,ctx context.Context,keeper int) QuorumS
  for {
     probeCtx,cancel:=context.WithTimeout(ctx,8*time.Second)
     service:=fmt.Sprintf("broker%d",keeper)
-    args:=[]string{"compose","-f","deployments/docker-compose-ha.yml",
+    args:=[]string{"compose","-f",haComposeFile(),
       "exec","-T",service,"/opt/kafka/bin/kafka-metadata-quorum.sh",
       "--bootstrap-server",service+":19092","describe","--status"}
     cmd:=exec.CommandContext(probeCtx,"docker",args...)
