@@ -46,3 +46,56 @@ The integration test uses actual partition metadata to verify replica count, ISR
 ## Merge gate
 
 All **nine** required GitHub Actions workflows passed on PR head `b6ed95d`, including the 100,000-event Kafka→ClickHouse regression. The [final three-broker HA run](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43893131251) uploaded `m3b-kafka-ha-report`; squash-merged as `8651745`.
+
+
+## Investigation: intermittent post-quorum-loss voter mismatch (Issue #28)
+
+The historic successes above are real but do **not** imply every subsequent
+quorum-loss recovery succeeded. During PR #27 run
+[44861653992](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/44861653992)
+and PR #29 run
+[44862289014](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/44862289014),
+the final recovery check **failed at ISR=1/3** after the controller quorum
+and two combined broker/controller nodes had been stopped and restarted.
+Logs from all three brokers included repeated
+`Voter key for VOTE or BEGIN_QUORUM_EPOCH request didn't match the receiver's
+replica key` / VOTE requests addressed to a different replica ID.
+
+This is evidence of a KRaft voter/endpoint identity inconsistency during
+recovery, **not** proof yet of the underlying cause. Possible causes include
+container DNS/IP changes with JVM DNS caching, persisted KRaft directory-ID
+and voter records, cluster-format version, or a Kafka defect. Do not claim a
+specific one without independent observations. Kafka 4.1's static-voter quorum
+configuration and metadata-quorum CLI semantics are documented in
+[Apache Kafka KRaft operations](https://kafka.apache.org/41/operations/kraft/).
+
+The M3b experiment now collects read-only KRaft diagnostics:
+
+```bash
+python3 -m unittest discover -s scripts -p 'test_m3b_kraft_diagnostics.py' -v
+python3 scripts/m3b_kraft_diagnostics.py --phase manual \
+  --out-dir /tmp/m3b-kraft-diagnostics
+make kafka-ha-smoke
+```
+
+The complete CI job writes separate timestamped receipts:
+
+- `before_fault.json` — Kafka nodes are healthy, before leader/controller faults
+- `after_failure.json` — snapshot **before** destroying disposable volumes if the actual HA gate fails
+- `after_success.json` — when the unchanged RF3/ISR3 recovery and ACKed-record checks succeed
+
+Artifact: `m3b-kraft-quorum-diagnostics`, present independently of the
+main `m3b-kafka-ha-report`. It includes per-node persisted `node.id`,
+`cluster.id`, `directory.id`, the Docker-assigned IPv4 address, what
+each running broker resolves for every other broker, the KRaft quorum
+`LeaderId` and high watermark, sanitized diagnostic error classes, and
+a mismatch list. It does **not** export environment variables, raw Kafka
+events, message payloads or credentials. It makes no writes to Kafka,
+does not format or reset the storage directory, and does not fix the quorum.
+
+**Review gate:** compare healthy and failed metadata, determine whether
+the persisted voter identities and Docker DNS endpoints remained stable
+after stop/start, and inspect quorum LeaderId/high-watermark progress.
+Fix the diagnosed cause in a *separate* patch and repeat the actual
+full fault matrix. Never waive `ISR=3`, replace the broker ACK check with
+a TCP readiness probe, or treat one flaky rerun as a successful fix.

@@ -2,14 +2,24 @@
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
 compose=(docker compose -f deployments/docker-compose-ha.yml)
+diagnostics="${M3B_KRAFT_DIAGNOSTICS_DIR:-/tmp/m3b-kraft-diagnostics}"
+capture_raft() {
+  local phase="$1"
+  # Best effort: observer failure must not hide the Kafka fault verdict.
+  python3 scripts/m3b_kraft_diagnostics.py --phase "$phase" \
+    --out-dir "$diagnostics" || true
+}
 cleanup() {
   local rc=$?
+  trap - EXIT
   if (( rc != 0 ));then
-    echo "HA integration failed; broker state:" >&2
+    echo "HA integration failed; preserving voter identity, quorum and DNS snapshot:" >&2
+    capture_raft after_failure >&2
     "${compose[@]}" ps >&2 || true
     "${compose[@]}" logs --tail=100 broker1 broker2 broker3 >&2 || true
   fi
   "${compose[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
+  exit "$rc"
 }
 trap cleanup EXIT
 "${compose[@]}" up -d
@@ -39,6 +49,10 @@ if (( created != 1 ));then echo 'RF3 topic creation timed out' >&2;exit 1;fi
 "${compose[@]}" exec -T broker1 /opt/kafka/bin/kafka-topics.sh \
   --bootstrap-server broker1:19092 --describe --topic m3b.ha.critical.v1
 
+# Capture identity/DNS/quorum baseline while all three brokers are healthy.
+# Tests retain the original full quorum-loss + RF3/ISR3 recovery assertions.
+capture_raft before_fault
+
 export TEST_KAFKA_HA=1
 export M3B_HA_REPORT_PATH="${M3B_HA_REPORT_PATH:-/tmp/m3b-kafka-ha-report.json}"
 go test -count=1 -timeout 9m -v ./internal/kafkaha \
@@ -58,3 +72,5 @@ assert r["quorum_loss_producer_error"],r
 assert "replica" in r["rejected_error"].lower(),r
 print("PASS M3b-P1: RF3, leader failover, ISR refusal, quorum-loss no-ACK, 35 ACKed ID readbacks")
 PY
+
+capture_raft after_success
