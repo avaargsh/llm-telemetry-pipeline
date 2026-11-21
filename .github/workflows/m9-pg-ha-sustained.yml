@@ -1,0 +1,61 @@
+name: m9-pg-ha-sustained-failover
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/m9-pg-ha-sustained.yml"
+      - "scripts/m9_failover_client.py"
+      - "scripts/m9-pgha-sustained-smoke.sh"
+      - "scripts/test_m9_failover.py"
+      - "scripts/m5_benchmark.py"
+      - "deployments/docker-compose.yml"
+      - "deployments/docker-compose-pg-ha.yml"
+      - "deployments/pgha/**"
+      - "cmd/usage-ingest-api/**"
+      - "cmd/outbox-relay/**"
+      - "cmd/ingest-worker/**"
+      - "cmd/pgha-probe/**"
+      - "internal/ledger/**"
+      - "internal/outbox/**"
+      - "internal/ingestapi/**"
+      - "internal/clickhouse/**"
+      - "migrations/**"
+      - "go.mod"
+      - "go.sum"
+  workflow_dispatch:
+jobs:
+  real-synchronous-failover-under-load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go mod download && go mod verify
+      - name: Verify exact PR HEAD and no generated merge-commit substitution
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+      - name: Python fault-aware ACK/reconciliation contract tests
+        run: python3 -m unittest discover -s scripts -p 'test_m9_failover.py' -v
+      - name: Go production ledger and outbox regression tests
+        run: go test -count=1 ./internal/ledger ./internal/outbox ./internal/ingestapi ./cmd/pgha-probe
+      - name: Real 25 RPS, 180-second PGHA SIGKILL and manual promotion
+        env:
+          M9_TARGET_RPS: "25"
+          M9_DURATION_SECONDS: "180"
+          M9_FAULT_AT_SECONDS: "35"
+          M9_CONCURRENCY: "32"
+          M9_OUTPUT_DIR: artifacts/m9-pgha-sustained
+        run: bash scripts/m9-pgha-sustained-smoke.sh
+      - name: Archive exact-HEAD raw timeline, client P95/P99 and authoritative reconciliation
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m9-pg-ha-sustained-failover-evidence
+          path: artifacts/m9-pgha-sustained/
+          if-no-files-found: error
+          retention-days: 14
