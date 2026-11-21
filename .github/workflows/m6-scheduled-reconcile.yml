@@ -16,6 +16,12 @@ jobs:
       - run: go mod verify
       - name: Prove UTC window selection, redaction and nonzero exit contract
         run: python3 -m unittest discover -s scripts -p 'test_m6_scheduled_reconcile.py' -v
+      - name: Build non-root CronJob container and verify its CLI entrypoint
+        run: |
+          docker build -f deployments/Dockerfile.m6-scheduled \
+            -t llm-telemetry-reconciler:m6-ci .
+          docker run --rm --read-only --user 65532:65532 \
+            llm-telemetry-reconciler:m6-ci --help
       - name: Test scheduled reconciliation against real PG and ClickHouse
         run: bash scripts/m6-reconcile-smoke.sh
       - name: Archive only sanitized M6 receipts
