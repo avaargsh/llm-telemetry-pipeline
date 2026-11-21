@@ -99,6 +99,21 @@ def read_fault_events(path):
     return verify_control(events)
 
 
+def api_recovered_marker_seen(path):
+    """Read-only observation of the runner's explicit post-promotion marker."""
+    try:
+        return any(json.loads(line).get("event") == "api_ready"
+                   for line in pathlib.Path(path).read_text(encoding="utf-8").splitlines())
+    except (OSError, ValueError, AttributeError, TypeError):
+        return False
+
+
+def eligible_early_retries(completed, already_processed):
+    """Only unknown initial outcomes; callers preserve the original event."""
+    return [index for index, result in completed
+            if index not in already_processed and result["classification"] == "UNKNOWN"]
+
+
 def send_http(url, event, token, scheduled, index, retry_round):
     body = json.dumps(event, sort_keys=True, separators=(",", ":")).encode()
     req = urllib.request.Request(
@@ -158,6 +173,15 @@ def summarize_attempts(attempts, control, visible_at, count, target_rps, duratio
         raise ValueError("no observed failed/unknown ACK during primary outage")
     if (len(by_id) != count or len(visible_at) != count or rejected or observer_errors):
         raise ValueError("missing final ACK, trusted visibility or reliable observations")
+    first_unknown_retries = {
+        a["event_id"]: a for a in attempts if a["retry_round"] == 1
+    }
+    retry_lags = []
+    for initial_unknown_attempt in initial_unknown:
+        retry = first_unknown_retries.get(initial_unknown_attempt["event_id"])
+        if retry is None or retry["started"] >= schedule_epoch + duration:
+            raise ValueError("unknown ACK was not retried promptly during the sustained load")
+        retry_lags.append(max(0, retry["started"] - initial_unknown_attempt["ended"]) * 1000)
     first_confirmation = {}
     for attempt in sorted(successful, key=lambda item: item["ended"]):
         first_confirmation.setdefault(attempt["event_id"], attempt["ended"])
@@ -209,6 +233,8 @@ def summarize_attempts(attempts, control, visible_at, count, target_rps, duratio
         "initial_unknown_ack": len(initial_unknown),
         "initial_unknown_resolved_same_id": sum(
             a["event_id"] in by_id for a in initial_unknown),
+        "early_retries_during_sustained_load": len(retry_lags),
+        "unknown_ack_retry_start_lag_p99_ms": percentile_or_none(retry_lags, 0.99),
         "recovered_duplicate_responses": sum(
             a["retry_round"] > 0 and a["classification"] == "CONFIRMED_DUPLICATE"
             for a in attempts),
@@ -352,18 +378,59 @@ def run_load(args):
     pathlib.Path(args.start_marker).write_text(str(epoch) + "\n", encoding="utf-8")
     try:
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.concurrency) as pool:
-            futures = []
-            for i, (event, offset) in enumerate(zip(events, offsets)):
-                scheduled = epoch + offset
-                remaining = scheduled - time.monotonic()
-                if remaining > 0:
-                    time.sleep(remaining)
-                futures.append(pool.submit(send_http, args.api_url, event,
-                                           token_for(event, scopes), scheduled, i, 0))
-            attempts.extend(f.result() for f in concurrent.futures.as_completed(futures))
+            initial_futures = []
+            early_futures = []
+            guard = threading.Lock()
+            retry_stop = threading.Event()
+            retry_errors = []
+
+            def prompt_recovery():
+                processed = set()
+                try:
+                    while not retry_stop.is_set():
+                        if not api_recovered_marker_seen(args.fault_events):
+                            retry_stop.wait(0.15)
+                            continue
+                        with guard:
+                            snapshot = list(initial_futures)
+                        completed = [(index, future.result())
+                                     for index, future in snapshot
+                                     if index not in processed and future.done()]
+                        eligible = eligible_early_retries(completed, processed)
+                        processed.update(index for index, _ in completed)
+                        for index in eligible:
+                            event = events[index]
+                            future = pool.submit(send_http, args.api_url, event,
+                                                 token_for(event, scopes),
+                                                 time.monotonic(), index, 1)
+                            early_futures.append(future)
+                        retry_stop.wait(0.15)
+                except Exception as exc:
+                    retry_errors.append(str(exc))
+
+            recovery_thread = threading.Thread(target=prompt_recovery, daemon=True)
+            recovery_thread.start()
+            try:
+                for i, (event, offset) in enumerate(zip(events, offsets)):
+                    scheduled = epoch + offset
+                    remaining = scheduled - time.monotonic()
+                    if remaining > 0:
+                        time.sleep(remaining)
+                    future = pool.submit(send_http, args.api_url, event,
+                                         token_for(event, scopes), scheduled, i, 0)
+                    with guard:
+                        initial_futures.append((i, future))
+                # Do not stop the pacing loop to wait for fault recovery or retries.
+                attempts.extend(f.result() for _, f in initial_futures)
+            finally:
+                retry_stop.set()
+                recovery_thread.join(timeout=5)
+            if recovery_thread.is_alive() or retry_errors:
+                raise RuntimeError("prompt-retry worker did not finish cleanly: " + str(retry_errors))
+            attempts.extend(f.result() for f in concurrent.futures.as_completed(early_futures))
             confirmed = {a["event_id"] for a in attempts
                          if a["classification"].startswith("CONFIRMED")}
-            for round_index in range(1, args.max_retry_rounds + 1):
+            for round_index in range(2, args.max_retry_rounds + 1):
                 missing = [(i, e) for i, e in enumerate(events) if e["event_id"] not in confirmed]
                 if not missing:
                     break
