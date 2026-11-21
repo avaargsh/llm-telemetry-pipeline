@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """M9 contract tests: fail closed on ambiguous ACK, partial ledgers and absent fault evidence."""
+import pathlib
+import tempfile
 import unittest
-from m9_failover_client import classify_status, phase_of, percentile_or_none, build_reconciliation
+from m9_failover_client import (classify_status, phase_of, percentile_or_none,
+                                build_reconciliation, summarize_attempts,
+                                write_raw_samples, validate_raw_samples)
 
 
 class M9FailoverContractTests(unittest.TestCase):
@@ -61,6 +65,39 @@ class M9FailoverContractTests(unittest.TestCase):
         self.assertEqual(result["accepted_unique_ids"], 2)
         self.assertEqual(result["published_with_confirmed_outbox"], 2)
         self.assertEqual(result["observed_acknowledged_id_loss"], 0)
+
+
+    def test_fault_window_includes_retried_acks_and_is_raw_recomputable(self):
+        control = {"fault_injected": 50.0, "primary_isolated": 52.0,
+                   "promoted": 55.0, "api_ready": 58.0}
+        def attempt(index, event_id, status, classification, started, ended,
+                    retry_round=0):
+            return {"index": index, "event_id": event_id, "status": status,
+                    "classification": classification, "started": started,
+                    "ended": ended, "scheduled": started, "retry_round": retry_round}
+        attempts = [
+            attempt(0, "id-1", 201, "CONFIRMED_CREATED", 49.0, 49.001),
+            attempt(1, "id-2", 503, "UNKNOWN", 51.2, 51.3),
+            attempt(2, "id-3", 201, "CONFIRMED_CREATED", 60.0, 60.1),
+            attempt(1, "id-2", 201, "CONFIRMED_CREATED", 60.4, 60.5, 1),
+        ]
+        visible = {"id-1": 49.4, "id-2": 61.0, "id-3": 60.5}
+        summary = summarize_attempts(attempts, control, visible, 3, 25, 120, 48.0, 0)
+        self.assertEqual(summary["window_metrics"]["fault"]["initial_unknown"], 1)
+        self.assertEqual(summary["window_metrics"]["fault"]["visible_p99_ms"], 9800.0)
+        self.assertAlmostEqual(summary["observed_write_interruption_bracket_s"], 11.099)
+        self.assertAlmostEqual(summary["maximum_observed_inter_ack_gap_s"], 11.099)
+        self.assertEqual(summary["post_last_ack_trusted_visibility_drain_s"], 0.5)
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "client.json"
+            write_raw_samples(attempts, visible, control, 48.0, path)
+            self.assertEqual(validate_raw_samples(directory, summary, 3)["raw_attempt_rows"], 4)
+            self.assertNotIn("id-2", (path.parent / "attempts.csv").read_text())
+            self.assertNotIn("id-2", (path.parent / "visibility.csv").read_text())
+            bad = path.parent / "visibility.csv"
+            bad.write_text(bad.read_text().replace("9800.000000", "1800.000000"))
+            with self.assertRaises(ValueError):
+                validate_raw_samples(directory, summary, 3)
 
 
 if __name__ == "__main__":
