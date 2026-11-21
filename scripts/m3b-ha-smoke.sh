@@ -55,6 +55,10 @@ capture_raft before_fault
 
 export TEST_KAFKA_HA=1
 export M3B_HA_REPORT_PATH="${M3B_HA_REPORT_PATH:-/tmp/m3b-kafka-ha-report.json}"
+export M3B_RECOVERY_TIMELINE_PATH="${M3B_RECOVERY_TIMELINE_PATH:-/tmp/m3b-kraft-recovery-timeline.json}"
+export M3B_EXACT_HEAD="$(git rev-parse HEAD)"
+# Never accept leftover JSON from an earlier experiment on the same runner.
+rm -f "$M3B_HA_REPORT_PATH" "$M3B_RECOVERY_TIMELINE_PATH"
 go test -count=1 -timeout 9m -v ./internal/kafkaha \
   -run '^TestThreeBrokerLeaderFailoverAndISRFailClosed$'
 python3 - <<'PY'
@@ -69,11 +73,29 @@ assert r["readback_records"]>=35 and r["all_acknowledged_verified"] is True,r
 assert r["stale_bootstrap_probe_error"],r
 assert r["rebootstrap_same_event_id_ack"] is True,r
 assert r["rebootstrap_live_isr_size"]==2,r
+assert r["quorum_isr_timeline_verified"] is True,r
 assert r["quorum_loss_tested"] is True,r
 assert r["acknowledged_ids_verified_after_quorum_restore"] is True,r
 assert r["quorum_loss_producer_error"],r
 assert "replica" in r["rejected_error"].lower(),r
 print("PASS M3b-P1: RF3, leader failover, ISR refusal, quorum-loss no-ACK, 35 ACKed ID readbacks")
+PY
+python3 - <<'PY'
+import json,os
+p=json.load(open(os.environ["M3B_RECOVERY_TIMELINE_PATH"]))
+assert p["head_sha"]==os.environ["M3B_EXACT_HEAD"],"timeline must bind to exact tested HEAD"
+assert p["result"]=="PASS_EXPERIMENT_ONLY",p
+assert len(p["recovery_milestones"])==8,p
+durations=p["observed_durations_ms"]
+assert set(durations)=={
+  "first_restart_to_quorum_status_observed_ms",
+  "first_restart_to_isr2_observed_ms",
+  "second_restart_to_isr3_observed_ms",
+  "two_voter_loss_to_ack_readback_ms",
+},durations
+assert all(isinstance(x,int) and x>=0 for x in durations.values()),durations
+assert p["quorum_status_observed_not_actual_quorum_establishment_instant"] is True
+print("PASS M3b recovery: independent quorum status, ISR2, ISR3 and replay evidence",durations)
 PY
 
 capture_raft after_success
