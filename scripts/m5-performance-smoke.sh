@@ -7,6 +7,8 @@ count="${M5_COUNT:-128}"
 concurrency="${M5_CONCURRENCY:-4}"
 partitions="${M5_PARTITIONS:-6}"
 batch="${M5_BATCH_SIZE:-32}"
+relay_timeout="${M5_RELAY_BATCH_TIMEOUT:-100ms}"
+relay_limit="${M5_RELAY_CLAIM_LIMIT:-5}"
 timeout="${M5_VISIBILITY_TIMEOUT:-90}"
 output="${M5_OUTPUT:-artifacts/m5-performance.json}"
 if [[ "$output" != /* ]]; then output="$PWD/$output"; fi
@@ -91,7 +93,8 @@ DATABASE_URL='postgres://telemetry:localdev-only@localhost:15432/telemetry?sslmo
   USAGE_INGEST_CREDENTIALS_JSON="$credentials" \
   "$tmp/api" --listen 127.0.0.1:18085 > "$tmp/api.log" 2>&1 &
 api_pid=$!
-"$tmp/relay" --worker "m5-${GITHUB_RUN_ID:-local}-$$" > "$tmp/relay.log" 2>&1 &
+"$tmp/relay" --worker "m5-${GITHUB_RUN_ID:-local}-$" \
+  --claim-limit "$relay_limit" --kafka-batch-timeout "$relay_timeout" > "$tmp/relay.log" 2>&1 &
 relay_pid=$!
 "$tmp/worker" --batch-size "$batch" --group "m5-${GITHUB_RUN_ID:-local}-$$" \
   --fetch-wait 250ms > "$tmp/worker.log" 2>&1 &
@@ -114,6 +117,7 @@ python3 scripts/m5_benchmark.py \
   --events-file "$tmp/events.jsonl" --seed "$seed" \
   --concurrency "$concurrency" --partitions "$partitions" \
   --batch-size "$batch" --visibility-timeout "$timeout" \
+  --relay-claim-limit "$relay_limit" --relay-batch-timeout "$relay_timeout" \
   --pid "api:$api_pid" --pid "relay:$relay_pid" --pid "consumer:$worker_pid" \
   "${slo_args[@]}" --output "$output"
 echo "M5 correctness report: $output"
