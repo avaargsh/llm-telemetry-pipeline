@@ -325,3 +325,49 @@ unfixed-endpoint comparator (without weakening ACK safety or deleting
 persistent volumes during recovery) and actual in-process resolved address
 evidence are still needed for definitive causal attribution. All timing
 fields are observation times, **not production RTO**.
+
+## M3b-P3 kernel controller-peer address evidence during dual-voter restart
+
+A noninvasive sampler now runs **concurrently with** the real three-broker,
+dual-controller restart test. Every approximately two seconds it discovers the
+live Docker container init PID and reads only the Linux network namespace
+`/proc/<pid>/net/tcp` and `tcp6` tables. It extracts **only remote IPs** of
+connections to KRaft controller port 9093 in ESTABLISHED, SYN_SENT or SYN_RECV
+state; remote IPv4-mapped IPv6 is normalized to IPv4. Captured artifacts:
+
+- `controller-peers.jsonl`: bounded, flush-per-observation, exact-head
+  records of each container's 9093 TCP peers and read/unavailable/stopped state
+  during fault and recovery
+- `controller-peers-summary.json`: independently checked head, monotonic
+  sample times, schema, valid addresses and at least one observed real peer;
+  result `EVIDENCE_CAPTURED_NOT_CAUSAL_PROOF` or `INCOMPLETE`
+- The existing `before_fault` / `after_success` / `after_failure` Kafka
+  node identity, Docker DNS, quorum and sanitized cross-target VOTE evidence
+  remain independent and mandatory
+
+The Python probe does **not** attach a debugger, join namespaces, inspect
+secrets, expose host process IDs or socket inodes, modify JVM parameters or
+restart brokers. Socket sampling failure produces `INCOMPLETE`, never a
+successful claim. Its CI gate is additive to RF3/ISR3, no-ACK during quorum
+loss, 35 sealed broker-ACKed ID readback, and independent voter identity
+checks.
+
+**Evidence limitation:** a Linux container network namespace may include
+sockets belonging to multiple processes. A remote TCP peer IP confirms an
+observed kernel connection or connection attempt, **not** that a specific
+Kafka JVM voter-target ID resolved to it or that Java DNS caching caused an
+old mismatch. Finite polling may miss short-lived connections. Correlate the
+captured peer addresses with the same fault run's normalized VOTE target-ID
+logs and container-IP/DNS snapshots. Issue #28 stays OPEN pending an actual
+causal comparison of dynamic and pinned-IP recovery modes.
+
+The additional test command is:
+
+```bash
+python3 -m unittest discover -s scripts -p 'test_m3b_controller_sockets.py' -v
+bash scripts/m3b-kraft-parallel-smoke.sh
+# Evidence: /tmp/m3b-parallel-kraft-diagnostics/controller-peers*.json*
+```
+
+Results are bounded to this disposable single-runner KRaft fault lab, not
+Kafka production HA, RTO, JVM DNS health or arbitrary network conditions.
