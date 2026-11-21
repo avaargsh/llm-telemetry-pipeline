@@ -1,6 +1,8 @@
 groups:
   - name: llm-telemetry-kafka-lag
-    interval: 30s
+    # The M4 Warning state spans approximately 50s, with a 30s hold.
+    # Evaluate every 5s to prevent phase-dependent missed firing.
+    interval: 5s
     rules:
       - alert: KafkaLagCollectorUnavailable
         expr: llm_telemetry_lag_scrape_success == 0 or absent(llm_telemetry_lag_scrape_success)
