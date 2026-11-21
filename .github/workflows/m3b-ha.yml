@@ -8,6 +8,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Confirm exact PR HEAD / dispatched SHA
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -15,7 +21,9 @@ jobs:
       - run: go mod download
       - run: go mod verify
       - name: Validate KRaft diagnostic identity/DNS contract
-        run: python3 -m unittest discover -s scripts -p 'test_m3b_kraft_diagnostics.py' -v
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_m3b_kraft_diagnostics.py' -v
+          python3 -m unittest discover -s scripts -p 'test_m3b_kraft_audit.py' -v
       - name: Real three-broker KRaft failure matrix
         env:
           M3B_HA_REPORT_PATH: /tmp/m3b-kafka-ha-report.json
@@ -35,6 +43,14 @@ jobs:
           name: m3b-quorum-isr-recovery-timeline
           path: /tmp/m3b-kraft-recovery-timeline.json
           if-no-files-found: error
+          retention-days: 14
+      - name: Archive sanitized voter-target and persistent identity audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m3b-voter-identity-audit
+          path: /tmp/m3b-kraft-diagnostics/voter-identity-audit.json
+          if-no-files-found: warn
           retention-days: 14
       - name: Archive voter identity, quorum and Docker DNS evidence
         if: always()
