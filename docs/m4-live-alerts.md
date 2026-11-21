@@ -55,3 +55,14 @@ The local overlay publishes Prometheus only on `127.0.0.1:19090`, Alertmanager o
 [Live Kafka alert delivery GitHub Actions run 43912506378](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43912506378) passed on the final merge-tested head `63f1263` and uploaded the `m4-live-alertmanager-delivery` JSON artifact. It verified three distinct real Kafka-triggered alerts (RetentionWarning, RetentionCritical and CollectorUnavailable), each with actual webhook **firing and resolved** deliveries in that order. The complementary [synthetic-metrics M4a test (PR #22)](https://github.com/avaargsh/llm-telemetry-pipeline/pull/22) separately verified data-gap alert delivery.
 
 All 13 PR-head workflows passed, including Go race/vet/build, M1 1k/100k events, M2a/M2b/M2c and M3a/M3b-P0/M3b-P1/M3c/M3d/M3e. **No sustained performance SLO or external on-call delivery** is claimed.
+
+
+## Alert evaluation-window regression (2026-11-21)
+
+[CI run #44859116042](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/44859116042) observed a **failed** M4 live-warning delivery: `KafkaRetentionWarning` never reached `firing` during the 110-second wait. This is a regression/CI failure, not evidence that the alerting chain is always reliable.
+
+The disposable Topic uses 120s retention and a 50s critical margin. The current early-warning rule is active only while remaining estimated headroom is **50–100 seconds**, a window of approximately **50 seconds**. With `for: 30s` and a 30-second group evaluation interval, unlucky evaluation phase alignment can skip `firing` even when the status passed through Warning. The Prometheus global 2-second evaluation default did not override the group's explicit 30-second interval.
+
+The fix changes only the lag alert **group evaluation interval to 5s**, retaining the 30-second `for` requirement. `promtool` regression data now explicitly models a finite 50-second Warning state, expects the warning to fire at 55s and resolve at 70s. This is a real timing-boundary regression check, not a shorter grace period. Existing live Kafka→webhook tests remain mandatory; deterministic rule tests alone do not prove live notification delivery.
+
+Production deployment must also account for scrape jitter, retention changes, evaluation stalls and Alertmanager notification delays. The 5-second evaluation interval is not a guarantee of real-time notification or a retention deadline.
