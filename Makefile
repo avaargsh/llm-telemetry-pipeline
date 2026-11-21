@@ -95,6 +95,15 @@ m6-scheduled-reconcile-tests:
 m6-scheduled-reconcile-smoke:
 	bash scripts/m6-reconcile-smoke.sh
 
+.PHONY: m5-performance-smoke m5-performance-tests
+
+# Disposable real stack throughput/latency/resource baseline (not a production SLO).
+m5-performance-smoke:
+	bash scripts/m5-performance-smoke.sh
+
+m5-performance-tests:
+	python3 -m unittest discover -s scripts -p 'test_m5_*.py' -v
+
 .PHONY: m7-postgres-ha-smoke
 
 # Disposable physical streaming standby and manual promotion fault proof.

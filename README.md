@@ -1,6 +1,6 @@
 # LLM Telemetry Pipeline
 
-> **Status:** M1, M2a (Ledger/Outbox), M2b (durable DLQ), M2c (replay-safe analysis) and M3a (Kafka replay fault tests) are merged and CI verified. M3c PostgreSQL ↔ ClickHouse reconciliation is merged and CI verified ([PR #8](https://github.com/avaargsh/llm-telemetry-pipeline/pull/8)). M3b-P1 three-broker KRaft fault experiments are **merged** and CI verified ([PR #12](https://github.com/avaargsh/llm-telemetry-pipeline/pull/12)). No exactly-once or absolute zero-loss claim.
+> **Status:** M1, M2a (Ledger/Outbox), M2b (durable DLQ), M2c (replay-safe analysis) and M3a (Kafka replay fault tests) are merged and CI verified. M3c PostgreSQL ↔ ClickHouse reconciliation is merged and CI verified ([PR #8](https://github.com/avaargsh/llm-telemetry-pipeline/pull/8)). M3b-P1 three-broker KRaft fault experiments are **merged** and CI verified ([PR #12](https://github.com/avaargsh/llm-telemetry-pipeline/pull/12)). No exactly-once or absolute zero-loss claim. M5a HTTP ingestion is merged ([PR #23](https://github.com/avaargsh/llm-telemetry-pipeline/pull/23)); production performance SLOs are NOT established.
 
 Go + Kafka (KRaft) + ClickHouse + PostgreSQL for reliable multi-tenant LLM inference usage telemetry.
 
@@ -73,6 +73,7 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 - [M3e live Kafka Lag exporter, Prometheus alerts and slow ClickHouse recovery](docs/m3e-lag-monitor.md)
 - [M4a synthetic metric delivery-layer tests](docs/m4a-alert-delivery.md)
 - [M4a+ actual Kafka lag to Alertmanager delivery](docs/m4-live-alerts.md)
+- [M5 performance baseline, reproducible SLO candidates, and profile comparator](docs/performance.md)
 - [Reliability contract](docs/reliability-contract.md)
 - [Verification evidence](docs/verification-record.md)
 - [Fault matrix](docs/fault-matrix.md)
