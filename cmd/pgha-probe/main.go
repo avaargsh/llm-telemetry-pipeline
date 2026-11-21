@@ -145,8 +145,7 @@ func run()error{
    e.PromptTokens,e.CompletionTokens,e.PayloadHash,e.Timestamp)
   if err!=nil{return err}
   if _,err:=tx.Exec(`INSERT INTO event_outbox(event_id,event_payload) VALUES ($1::uuid,$2::jsonb)`,e.EventID,string(payload));err!=nil{return err}
-  if err:=os.WriteFile(*marker,[]byte("uncommitted
-"),0600);err!=nil{return err}
+  if err:=os.WriteFile(*marker,[]byte("uncommitted\n"),0600);err!=nil{return err}
   // Stop the primary while the transaction remains open. It must not commit.
   var unused any
   if err:=tx.QueryRow("SELECT pg_sleep(90)").Scan(&unused);err!=nil{return fmt.Errorf("expected uncommitted transaction interrupted by primary failure: %w",err)}
@@ -193,8 +192,7 @@ func run()error{
   if *evidence==""{return errors.New("evidence file is required")}
   if err:=os.MkdirAll(filepath.Dir(*evidence),0700);err!=nil{return err}
   b,err:=json.MarshalIndent(e,"","  ");if err!=nil{return err}
-  if err:=os.WriteFile(*evidence,append(b,'
-'),0600);err!=nil{return err}
+  if err:=os.WriteFile(*evidence,append(b,'\n'),0600);err!=nil{return err}
   fmt.Println("PASS promoted standby: 12 confirmed ledger/outbox events; interrupted transaction absent; 13th stable-ID retry created; stale lease fenced; 0 phantom Kafka ACKs")
  }
  return nil
