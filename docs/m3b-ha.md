@@ -190,3 +190,54 @@ the lab eventually reports ISR3 in a few trials. Comparing the KRaft voter
 IDs in logged requests with broker persisted metadata, controller quorum
 HighWatermark, DNS and elapsed ISR catch-up across multiple fixed-image runs
 remains the outstanding investigation.
+
+## P0 identity and cross-target VOTE evidence audit (Issue #28)
+
+Historical failed CI logs reported VOTE requests from `RaftManager id=1`
+carrying a target `ReplicaKey(id=3)` to the receiving broker with
+`RaftManager id=2`, and the symmetric wrong target from the same sender to
+broker 3. The recipients rejected the voter keys. This is **observed wrong
+receiver/target matching**, not proof of Docker DNS, Java address caching,
+persistent storage corruption, or a Kafka bug.
+
+This experiment now produces an additional redacted artifact:
+`m3b-voter-identity-audit` (or `m3b-voter-audit-trial-*` for independent
+trials). The audit runs **after** the real fault test, or during failure
+cleanup before disposable volumes are removed:
+
+- Compares `before_fault.json` with `after_success.json` or
+  `after_failure.json`: persisted per-broker `node.id`, `cluster.id`,
+  `directory.id`, Docker IPv4 changes and peers' actual Docker DNS mapping.
+- Samples a bounded tail of real KRaft container logs, extracting only
+  `sender_id`, `receiver_id`, `requested_voter_id` and counts for
+  *cross-target* VOTE recipient failures; original log lines, opaque directory
+  values, event payloads and secrets are **not** persisted in the audit JSON.
+- Uses clear outcomes: `NO_MISMATCH_OBSERVED`,
+  `VOTER_TARGET_ID_MISMATCH_OBSERVED`,
+  `IDENTITY_OR_DNS_DRIFT_OBSERVED` or `INCOMPLETE`.
+- Requires a complete baseline, complete post-recovery snapshot, a successful
+  log collection, exact tested Git HEAD and zero observed mismatches to pass
+  the normal real-HA CI gate. Missing observations do **not** mean healthy.
+- If the HA experiment itself fails, the cleanup phase still records
+  incomplete/abnormal evidence whenever possible. The audit does not restart
+  brokers, reset metadata, change quorum membership, or waive ISR3.
+
+Local reproducibility and offline analysis:
+
+```bash
+python3 -m unittest discover -s scripts -p 'test_m3b_kraft_audit.py' -v
+make kafka-ha-smoke
+python3 scripts/m3b_kraft_audit.py \
+  --before /tmp/m3b-kraft-diagnostics/before_fault.json \
+  --after /tmp/m3b-kraft-diagnostics/after_success.json \
+  --out /tmp/m3b-kraft-diagnostics/voter-identity-audit.json \
+  --docker-logs
+```
+
+The snapshot uses `getent hosts` *inside* the Kafka containers, which
+does **not** reveal the Kafka JVM's potentially cached resolved addresses.
+A bounded log tail can also miss older events. Therefore
+`NO_MISMATCH_OBSERVED` means only that **this measured window** showed no
+cross-target mismatch; it is not a root-cause exclusion or production HA
+claim. Compare anomalous logs and snapshots before changing any cluster
+configuration.
