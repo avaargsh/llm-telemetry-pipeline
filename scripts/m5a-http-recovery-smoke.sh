@@ -153,10 +153,34 @@ CLICKHOUSE_HTTP='http://localhost:18123' CLICKHOUSE_USER=telemetry \
 CLICKHOUSE_PASSWORD=localdev-only \
 "$tmp/reconciler" --start '2026-11-21T10:00:00Z' --end '2026-11-21T10:00:01Z' \
    --grace 0s --max-records 100 > "$tmp/reconcile.json"
-python3 - "$tmp/reconcile.json" <<'PY'
-import json, sys
-report = json.load(open(sys.argv[1], encoding="utf-8"))
+python3 - "$tmp/reconcile.json" "${M5A_EVIDENCE_PATH:-}" <<'PY'
+import json, os, pathlib, sys
+with open(sys.argv[1], encoding="utf-8") as source:
+    report = json.load(source)
 assert report["result"] == "PASS", report
-print("M5a reconciliation result: PASS")
+assert report["ledger_events"] == 16 and report["analytics_events"] == 16, report
+assert report["counts"].get("matched", 0) + report["counts"].get("replayed", 0) == 16, report
+evidence = {
+    "schema_version": 1,
+    "status": "PASS",
+    "head_sha": os.environ.get("GITHUB_SHA", "local"),
+    "run_id": os.environ.get("GITHUB_RUN_ID", "local"),
+    "fault": "Kafka stopped during authenticated HTTP ingestion",
+    "http_created": 16,
+    "http_duplicates": 1,
+    "http_denied_unauthorized": 1,
+    "http_denied_wrong_scope": 1,
+    "postgres_ledger_records": 16,
+    "postgres_outbox_pending_during_kafka_outage": 16,
+    "postgres_outbox_published_after_recovery": 16,
+    "clickhouse_trusted_events": 16,
+    "clickhouse_integrity_violations": 0,
+    "reconciliation": report,
+}
+if sys.argv[2]:
+    path = pathlib.Path(sys.argv[2])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+print("M5a reconciliation and machine-readable evidence: PASS")
 PY
 echo "PASS M5a: authenticated HTTP accepted 16 durable events while Kafka down; after recovery PG Outbox/CH trusted projection reconciled without duplicate billing"
