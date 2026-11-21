@@ -7,6 +7,8 @@ on:
       - "scripts/m3b-ha-smoke.sh"
       - "scripts/m3b_kraft_diagnostics.py"
       - "scripts/test_m3b_kraft_diagnostics.py"
+      - "scripts/m3b_kraft_audit.py"
+      - "scripts/test_m3b_kraft_audit.py"
       - "deployments/docker-compose-ha.yml"
   workflow_dispatch:
 jobs:
@@ -35,6 +37,7 @@ jobs:
         run: |
           go test -count=1 ./internal/kafkaha
           python3 -m unittest discover -s scripts -p 'test_m3b_kraft_diagnostics.py' -v
+          python3 -m unittest discover -s scripts -p 'test_m3b_kraft_audit.py' -v
       - name: Exercise real leader failover, minISR refusal, quorum loss and staged recovery
         env:
           M3B_HA_REPORT_PATH: /tmp/m3b-kafka-ha-report.json
@@ -55,6 +58,14 @@ jobs:
           name: m3b-recovery-timeline-trial-${{ matrix.trial }}
           path: /tmp/m3b-kraft-recovery-timeline.json
           if-no-files-found: error
+          retention-days: 14
+      - name: Preserve independent cross-target voter and Docker DNS comparison
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m3b-voter-audit-trial-${{ matrix.trial }}
+          path: /tmp/m3b-kraft-diagnostics/voter-identity-audit.json
+          if-no-files-found: warn
           retention-days: 14
       - name: Preserve before/failure/success identity, DNS and quorum snapshots
         if: always()
