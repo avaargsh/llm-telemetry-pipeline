@@ -99,3 +99,47 @@ after stop/start, and inspect quorum LeaderId/high-watermark progress.
 Fix the diagnosed cause in a *separate* patch and repeat the actual
 full fault matrix. Never waive `ISR=3`, replace the broker ACK check with
 a TCP readiness probe, or treat one flaky rerun as a successful fix.
+
+## Follow-up: stopped-leader producer rebootstrap (Issue #28, isolated fix)
+
+A separate CI failure ([run 44867739156, original attempt](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/44867739156))
+occurred **before** the quorum-loss/recovery phase. After stopping the data
+leader, partition metadata had a new leader and ISR=2, but the producer
+tried `localhost:39094` for a stopped former leader and received a
+connection-refused error. That event did not receive a Kafka ACK. This is
+different from the earlier failure to restore ISR=3 after quorum restart;
+the latter remains unresolved as a root-cause investigation.
+
+This lab now makes the client recovery action explicit:
+
+1. Verify actual RF=3, ISR=2, and new leader from Kafka partition metadata.
+2. Attempt the sealed record through the **stopped former leader only**;
+   require failure (UNKNOWN outcome, not an ACK).
+3. Validate that the new bootstrap list contains only *current ISR members*
+   and that the live leader is first. Reject invalid/duplicate broker IDs,
+   an absent leader, or insufficient ISR. Never silently fall back to the
+   stopped broker.
+4. Retry **the exact same signed Event ID, key and payload** using the
+   live ISR seed list and require a real Kafka `acks=all` confirmation.
+   Continue sending the remaining records on live brokers.
+5. During the separate `minISR=3` rejection probe, contact a live broker
+   and require the actual Kafka NotEnoughReplicas response. A generic
+   connection refusal **cannot** pass that safety gate.
+6. During the 2/3 controller+broker loss probe, contact the lone surviving
+   broker and reject any Kafka ACK; a transport failure is treated as
+   UNKNOWN, not proof of rollback or non-append.
+
+Only the *disposable Docker host-facing* advertised listeners and Go bootstrap
+addresses are changed from `localhost` to `127.0.0.1`. There is no
+production network/client code change. Existing voter quorum settings,
+RF3/minISR2 baseline, ISR3 final recovery requirement and 35 ACKed record
+verification remain unchanged.
+
+A separate exact-HEAD CI workflow `m3b-kraft-recovery-repeated-evidence`
+runs **three independent, fully isolated real fault trials**, each with
+its own successful HA JSON and sanitized before/after identity/quorum artifacts.
+All three must pass. Repeating successful runs improves confidence but
+**does not prove the underlying intermittent voter-key recovery problem
+is permanently solved**, guarantee a bounded RTO, or establish production
+Kafka HA. Retain Issue #28 until its quorum-loss failure mechanism is
+reproduced and distinguished from the client reconnect issue.
