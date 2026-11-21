@@ -1,0 +1,29 @@
+name: m5b-outbox-ack-crash-window
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+jobs:
+  real-kafka-postgres-crash-window:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go mod download
+      - run: go mod verify
+      - name: Verify Kafka ACK / Relay crash / lease re-claim with real dependencies
+        env:
+          M5B_EVIDENCE_PATH: artifacts/m5b-outbox-crash-window.json
+        run: bash scripts/m5b-relay-ack-crash-smoke.sh
+      - name: Archive transaction/lease/physical-duplicate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m5b-outbox-ack-crash-evidence
+          path: artifacts/m5b-outbox-crash-window.json
+          if-no-files-found: error
+          retention-days: 14
