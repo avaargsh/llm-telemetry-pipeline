@@ -186,10 +186,25 @@ def main():
     finally:
         if candidate and os.path.exists(candidate):
             os.unlink(candidate)
-    print(f"KRaft {args.phase} diagnostic: {receipt['identity_verdict']} "
-          f"findings={len(receipt['findings'])} node_errors="
-          f"{sum(len(n['errors']) for n in receipt['nodes'].values())} "
-          f"receipt={target}")
+    # Print only vetted status fields. This survives CI failures even when
+    # the compressed artifact cannot be retrieved by a reviewer.
+    compact = {
+        "phase": args.phase,
+        "identity_verdict": receipt["identity_verdict"],
+        "findings": receipt["findings"],
+        "node_status": {
+            name: {
+                "docker_ipv4": node["container_ipv4"],
+                "persisted_node_id": node["meta"].get("node.id"),
+                "directory_id": node["meta"].get("directory.id"),
+                "quorum_leader_id": node["quorum"].get("LeaderId"),
+                "quorum_high_watermark": node["quorum"].get("HighWatermark"),
+                "errors": node["errors"],
+            } for name, node in receipt["nodes"].items()
+        },
+        "receipt": str(target),
+    }
+    print(json.dumps(compact, sort_keys=True))
     # Evidence collection is non-interfering: the HA test, not the
     # observation tool, decides whether an experiment has passed.
     return 0
