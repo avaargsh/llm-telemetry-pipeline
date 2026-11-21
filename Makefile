@@ -72,6 +72,13 @@ m4a-alert-smoke:
 m4-alert-e2e:
 	bash scripts/m4-alert-delivery-smoke.sh
 
+.PHONY: m5a-http-recovery-smoke
+
+# Disposable full-path test: HTTP-authenticated PG ingestion while Kafka is
+# down, followed by Relay/ClickHouse recovery and strict reconciliation.
+m5a-http-recovery-smoke:
+	bash scripts/m5a-http-recovery-smoke.sh
+
 .PHONY: m5b-outbox-crash-smoke
 
 # Real Kafka ACK, simulated Relay crash before PG mark, fenced retry.
