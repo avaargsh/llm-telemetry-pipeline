@@ -7,8 +7,8 @@ import (
 
 func sampleRecoveryMilestones() []RecoveryMilestone {
  return []RecoveryMilestone{
-  {Name:"two_voters_stopped",ElapsedMS:100,ISR:1},
-  {Name:"quorum_loss_no_ack",ElapsedMS:250,ISR:1},
+  {Name:"two_voters_stopped",ElapsedMS:100},
+  {Name:"quorum_loss_no_ack",ElapsedMS:250},
   {Name:"first_voter_restarted",ElapsedMS:400},
   {Name:"quorum_status_observed",ElapsedMS:700,LeaderID:1,HighWatermark:51},
   {Name:"intermediate_isr2_observed",ElapsedMS:1100,ISR:2,LeaderID:1},
