@@ -5,7 +5,8 @@ import tempfile
 import unittest
 from m9_failover_client import (classify_status, phase_of, percentile_or_none,
                                 build_reconciliation, summarize_attempts,
-                                write_raw_samples, validate_raw_samples)
+                                write_raw_samples, validate_raw_samples,
+                                eligible_early_retries, api_recovered_marker_seen)
 
 
 class M9FailoverContractTests(unittest.TestCase):
@@ -98,6 +99,22 @@ class M9FailoverContractTests(unittest.TestCase):
             bad.write_text(bad.read_text().replace("9800.000000", "1800.000000"))
             with self.assertRaises(ValueError):
                 validate_raw_samples(directory, summary, 3)
+
+
+    def test_early_retries_follow_recovery_marker_without_changing_identity(self):
+        completed = [(1, {"classification": "UNKNOWN", "event_id": "stable-1"}),
+                     (2, {"classification": "CONFIRMED_CREATED", "event_id": "stable-2"}),
+                     (3, {"classification": "REJECTED", "event_id": "stable-3"})]
+        self.assertEqual(eligible_early_retries(completed, set()), [1])
+        self.assertEqual(eligible_early_retries(completed, {1}), [])
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / "fault-events.jsonl"
+            self.assertFalse(api_recovered_marker_seen(path))
+            path.write_text('{"event": "fault_injected"}\\n'.replace('\\n', '\n'))
+            self.assertFalse(api_recovered_marker_seen(path))
+            with path.open("a") as f:
+                f.write('{"event": "api_ready"}' + "\n")
+            self.assertTrue(api_recovered_marker_seen(path))
 
 
 if __name__ == "__main__":
