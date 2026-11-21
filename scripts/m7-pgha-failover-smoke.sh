@@ -63,7 +63,8 @@ done
 if (( ready == 0 ));then echo 'synchronous remote_apply protection not active' >&2;exit 1;fi
 
 # Prove hot standby is not writable even though its TCP connection is healthy.
-if psql "$standby_dsn" -v ON_ERROR_STOP=1 -c 'CREATE TABLE pgha_write_must_fail (id integer)' >/dev/null 2>&1;then
+if "${compose[@]}" exec -T pg-standby \
+  psql -U telemetry -d telemetry -v ON_ERROR_STOP=1 -c 'CREATE TABLE pgha_write_must_fail (id integer)' >/dev/null 2>&1;then
   echo 'standby unexpectedly accepted a write: HALT' >&2;exit 1
 fi
 
@@ -91,7 +92,8 @@ wait "$hold_pid" 2>/dev/null || true
 if [[ -n "$("${compose[@]}" ps --status running -q pg-primary)" ]];then
   echo 'old primary is still running; refusing promotion' >&2;exit 1
 fi
-if PGCONNECT_TIMEOUT=2 psql "$primary_dsn" -tAc 'SELECT 1' >/dev/null 2>&1;then
+# Probe the published primary port without needing host-side psql.
+if timeout 3 bash -c '</dev/tcp/127.0.0.1/25432' >/dev/null 2>&1;then
   echo 'old primary still accepts connections; refusing promotion' >&2;exit 1
 fi
 "$tmp/pgha-probe" --phase standby --seed "$seed" --dsn "$standby_dsn"
