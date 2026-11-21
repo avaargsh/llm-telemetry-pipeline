@@ -6,6 +6,8 @@ on:
       - "internal/kafkaha/**"
       - "scripts/m3b-kraft-parallel-smoke.sh"
       - "scripts/m3b_parallel_proof.py"
+      - "scripts/m3b_controller_sockets.py"
+      - "scripts/test_m3b_controller_sockets.py"
       - "scripts/test_m3b_parallel_proof.py"
       - "scripts/m3b_kraft_diagnostics.py"
       - "scripts/m3b_kraft_audit.py"
@@ -35,7 +37,9 @@ jobs:
       - run: go mod download && go mod verify
       - name: Fail-closed oracle and diagnostic unit tests
         run: |
+          bash -n scripts/m3b-kraft-parallel-smoke.sh
           python3 -m unittest discover -s scripts -p 'test_m3b_parallel_proof.py' -v
+          python3 -m unittest discover -s scripts -p 'test_m3b_controller_sockets.py' -v
           python3 -m unittest discover -s scripts -p 'test_m3b_kraft_audit.py' -v
           python3 -m unittest discover -s scripts -p 'test_m3b_kraft_diagnostics.py' -v
           go test -count=1 ./internal/kafkaha
@@ -50,6 +54,16 @@ jobs:
         with:
           name: m3b-parallel-kraft-recovery-trial-${{ matrix.trial }}
           path: /tmp/m3b-parallel-restart-report.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Archive actual controller TCP kernel peer samples and independent coverage receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m3b-controller-sockets-trial-${{ matrix.trial }}
+          path: |
+            /tmp/m3b-parallel-kraft-diagnostics/controller-peers.jsonl
+            /tmp/m3b-parallel-kraft-diagnostics/controller-peers-summary.json
           if-no-files-found: warn
           retention-days: 14
       - name: Archive identity and DNS comparison, including incomplete failure receipts
