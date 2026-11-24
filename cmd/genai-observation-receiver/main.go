@@ -48,7 +48,6 @@ func validCredentialToken(token string) bool {
 	return true
 }
 
-
 func rejectDuplicateJSONKeys(raw []byte) error {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	var walk func() error

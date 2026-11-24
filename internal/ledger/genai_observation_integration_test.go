@@ -29,8 +29,8 @@ func (e *genAIWorkerTestExporter) Export(_ context.Context,o genaiobs.Observatio
 
 // Compare full authoritative rows, not just counts: a changed token total,
 // digest, event identity or outbox payload must also fail this assertion.
-// Restrict the snapshot to the two isolated test tenants and request prefix
-// so other packages' integration fixtures cannot make this test flaky.
+// Restrict the snapshot to the two isolated test tenants so other packages'
+// integration fixtures cannot make this test flaky.
 func genAIUsageSnapshot(t *testing.T, ctx context.Context, db *sql.DB, tenantA, tenantB string) string {
 	t.Helper()
 	const q = `
