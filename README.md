@@ -95,3 +95,8 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 - [Fault matrix](docs/fault-matrix.md)
 
 **Warning:** The default Compose is single-node Kafka RF=1. The separate three-broker Compose is a disposable combined-mode CI fault lab, not a production deployment pattern. Do not expose local dev passwords or plaintext listeners.
+
+
+## M11.7: Independent durable receiver runtime
+
+The independent OTLP Receiver, PostgreSQL least-privilege roles, deployment template and verification contract are documented in [M11.7 Receiver Runtime](docs/m11-receiver-runtime.md). Apply migration 003 before M11.6/M11.7 durable writers and migration 004 for receiver/worker database capabilities.

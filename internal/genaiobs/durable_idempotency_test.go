@@ -103,3 +103,103 @@ func TestDurableStoreRejectsInvalidIdempotencyKeys(t *testing.T) {
 		}
 	}
 }
+
+func TestDurableStoreDeliveryReceiptTenantIsolationExpiryAndCapacity(t *testing.T) {
+	store, db := openDurableTestStore(t, 8)
+	ctx := context.Background()
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	tenantA := "durable-test-receipt-a-" + suffix
+	tenantB := "durable-test-receipt-b-" + suffix
+	tenantC := "durable-test-receipt-c-" + suffix
+	key := "genaiobs/shared-tenant-key"
+	observationA := durableTestObservation(tenantA, "8123456789abcdef0123456789abcdef", 81)
+	observationB := observationA
+	observationB.TenantID = tenantB
+
+	if err := store.EnqueueWithIdempotencyKey(ctx, observationA, key); err != nil {
+		t.Fatal(err)
+	}
+	var expiresAt time.Time
+	if err := db.QueryRowContext(ctx,
+		"SELECT expires_at FROM public.genai_observation_delivery_receipts WHERE tenant_id=$1 AND idempotency_key=$2",
+		tenantA, key).Scan(&expiresAt); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	if !expiresAt.After(now.Add(29*24*time.Hour)) || expiresAt.After(now.Add(31*24*time.Hour)) {
+		t.Fatalf("delivery receipt retention is not approximately 30 days: expires_at=%s now=%s", expiresAt, now)
+	}
+
+	claimed, err := store.Claim(ctx, "worker-receipt-expiry", time.Minute, 1)
+	if err != nil || len(claimed) != 1 || claimed[0].Observation.TenantID != tenantA {
+		t.Fatalf("claim tenant A receipt row: claimed=%+v err=%v", claimed, err)
+	}
+	if err := store.Ack(ctx, claimed[0], "worker-receipt-expiry"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The same key and same trace/span identity are independent under another
+	// authenticated tenant because both receipt uniqueness keys include tenant_id.
+	if err := store.EnqueueWithIdempotencyKey(ctx, observationB, key); err != nil {
+		t.Fatalf("same idempotency key must be isolated by tenant: %v", err)
+	}
+	for _, tenant := range []string{tenantA, tenantB} {
+		var receipts int
+		if err := db.QueryRowContext(ctx,
+			"SELECT count(*) FROM public.genai_observation_delivery_receipts WHERE tenant_id=$1 AND idempotency_key=$2",
+			tenant, key).Scan(&receipts); err != nil {
+			t.Fatal(err)
+		}
+		if receipts != 1 {
+			t.Fatalf("tenant %s has %d receipts for shared key; want 1", tenant, receipts)
+		}
+	}
+
+	// Expire both natural and delivery receipts to model a replay after the
+	// configured retention window. The next admission may create a new row.
+	if _, err := db.ExecContext(ctx, `UPDATE public.genai_observation_delivery_receipts
+SET accepted_at=now()-interval '31 days', expires_at=now()-interval '1 second' WHERE tenant_id=$1 AND idempotency_key=$2`, tenantA, key); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `UPDATE public.genai_observation_receipts
+SET accepted_at=now()-interval '2 days', expires_at=now()-interval '1 second'
+WHERE tenant_id=$1 AND trace_id=$2 AND span_id=$3`,
+		tenantA, observationA.TraceID, observationA.SpanID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.EnqueueWithIdempotencyKey(ctx, observationA, key); err != nil {
+		t.Fatalf("re-admission after receipt expiry: %v", err)
+	}
+	var requeued int
+	if err := db.QueryRowContext(ctx,
+		"SELECT count(*) FROM public.genai_observations WHERE tenant_id=$1", tenantA).Scan(&requeued); err != nil {
+		t.Fatal(err)
+	}
+	if requeued != 1 {
+		t.Fatalf("expired receipt did not permit replay admission: rows=%d", requeued)
+	}
+
+	// Capacity is enforced against the durable receipt counter in the same
+	// transaction; an over-capacity admission must roll back both receipts and row.
+	if _, err := db.ExecContext(ctx,
+		"UPDATE public.genai_observation_queue_state SET delivery_receipt_items=$1 WHERE singleton=true",
+		int64(MaxDurableDeliveryReceiptCapacity)); err != nil {
+		t.Fatal(err)
+	}
+	observationC := durableTestObservation(tenantC, "9123456789abcdef0123456789abcdef", 91)
+	if err := store.EnqueueWithIdempotencyKey(ctx, observationC, "genaiobs/capacity-boundary"); !errors.Is(err, ErrDurableQueueFull) {
+		t.Fatalf("delivery receipt capacity must fail closed, got %v", err)
+	}
+	var rows, receipts int
+	if err := db.QueryRowContext(ctx,
+		"SELECT count(*) FROM public.genai_observations WHERE tenant_id=$1", tenantC).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRowContext(ctx,
+		"SELECT count(*) FROM public.genai_observation_delivery_receipts WHERE tenant_id=$1", tenantC).Scan(&receipts); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 || receipts != 0 {
+		t.Fatalf("over-capacity admission partially committed: rows=%d receipts=%d", rows, receipts)
+	}
+}

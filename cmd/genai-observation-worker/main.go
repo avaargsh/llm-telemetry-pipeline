@@ -18,7 +18,8 @@ import (
 	"time"
 
 	"github.com/avaargsh/llm-telemetry-pipeline/internal/genaiobs"
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 type workerMetrics struct {
@@ -27,8 +28,15 @@ type workerMetrics struct {
 	terminal     atomic.Uint64
 	errors       atomic.Uint64
 	idle         atomic.Uint64
-	queueLength  atomic.Int64
-	queueReady   atomic.Bool
+	queueLength                atomic.Int64
+	queuePending               atomic.Int64
+	queueTerminal              atomic.Int64
+	queueCapacity              atomic.Int64
+	queueOldestPendingAgeNanos atomic.Int64
+	queueReady                 atomic.Bool
+	exportDurationCount        atomic.Uint64
+	exportDurationNanos        atomic.Uint64
+	lastSuccessfulDeliveryUnix atomic.Int64
 }
 
 func (m *workerMetrics) handler(db *sql.DB) http.Handler {
@@ -86,6 +94,25 @@ func (m *workerMetrics) handler(db *sql.DB) http.Handler {
 		fmt.Fprintln(w, "# HELP llm_telemetry_genai_worker_queue_length Current queued rows, including terminal rows.")
 		fmt.Fprintln(w, "# TYPE llm_telemetry_genai_worker_queue_length gauge")
 		fmt.Fprintf(w, "llm_telemetry_genai_worker_queue_length %d\n", m.queueLength.Load())
+		fmt.Fprintln(w, "# HELP llm_telemetry_genai_worker_queue_pending_depth Current non-terminal queue rows.")
+		fmt.Fprintln(w, "# TYPE llm_telemetry_genai_worker_queue_pending_depth gauge")
+		fmt.Fprintf(w, "llm_telemetry_genai_worker_queue_pending_depth %d\n", m.queuePending.Load())
+		fmt.Fprintln(w, "# HELP llm_telemetry_genai_worker_queue_terminal_depth Current terminal queue rows.")
+		fmt.Fprintln(w, "# TYPE llm_telemetry_genai_worker_queue_terminal_depth gauge")
+		fmt.Fprintf(w, "llm_telemetry_genai_worker_queue_terminal_depth %d\n", m.queueTerminal.Load())
+		fmt.Fprintln(w, "# HELP llm_telemetry_genai_worker_queue_capacity Configured immutable queue capacity.")
+		fmt.Fprintln(w, "# TYPE llm_telemetry_genai_worker_queue_capacity gauge")
+		fmt.Fprintf(w, "llm_telemetry_genai_worker_queue_capacity %d\n", m.queueCapacity.Load())
+		fmt.Fprintln(w, "# HELP llm_telemetry_genai_worker_oldest_pending_age_seconds Age of the oldest non-terminal queue row.")
+		fmt.Fprintln(w, "# TYPE llm_telemetry_genai_worker_oldest_pending_age_seconds gauge")
+		fmt.Fprintf(w, "llm_telemetry_genai_worker_oldest_pending_age_seconds %.6f\n", float64(m.queueOldestPendingAgeNanos.Load())/float64(time.Second))
+		fmt.Fprintln(w, "# HELP llm_telemetry_genai_worker_export_duration_seconds HTTP export duration.")
+		fmt.Fprintln(w, "# TYPE llm_telemetry_genai_worker_export_duration_seconds summary")
+		fmt.Fprintf(w, "llm_telemetry_genai_worker_export_duration_seconds_count %d\n", m.exportDurationCount.Load())
+		fmt.Fprintf(w, "llm_telemetry_genai_worker_export_duration_seconds_sum %.9f\n", float64(m.exportDurationNanos.Load())/float64(time.Second))
+		fmt.Fprintln(w, "# HELP llm_telemetry_genai_worker_last_successful_delivery_timestamp_seconds Unix timestamp of the last successful durable delivery.")
+		fmt.Fprintln(w, "# TYPE llm_telemetry_genai_worker_last_successful_delivery_timestamp_seconds gauge")
+		fmt.Fprintf(w, "llm_telemetry_genai_worker_last_successful_delivery_timestamp_seconds %d\n", m.lastSuccessfulDeliveryUnix.Load())
 		fmt.Fprintln(w, "# HELP llm_telemetry_genai_worker_queue_length_available Whether the last queue-length sample succeeded.")
 		fmt.Fprintln(w, "# TYPE llm_telemetry_genai_worker_queue_length_available gauge")
 		if m.queueReady.Load() {
@@ -95,6 +122,40 @@ func (m *workerMetrics) handler(db *sql.DB) http.Handler {
 		}
 	})
 	return mux
+}
+
+type measuredExporter struct {
+	delegate genaiobs.DurableExporter
+	metrics  *workerMetrics
+}
+
+func (e measuredExporter) Export(ctx context.Context, delivery genaiobs.Delivery) error {
+	started := time.Now()
+	err := e.delegate.Export(ctx, delivery)
+	e.metrics.exportDurationNanos.Add(uint64(time.Since(started).Nanoseconds()))
+	e.metrics.exportDurationCount.Add(1)
+	return err
+}
+
+func openWorkerDB(dsn string) (*sql.DB, error) {
+	config, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return nil, errors.New("invalid observation database configuration")
+	}
+	db := stdlib.OpenDB(*config, stdlib.OptionAfterConnect(func(ctx context.Context, conn *pgx.Conn) error {
+		if _, err := conn.Exec(ctx, "SET ROLE llm_telemetry_observation_worker"); err != nil {
+			return errors.New("cannot assume observation worker database role")
+		}
+		if _, err := conn.Exec(ctx, "SET search_path TO pg_catalog, public"); err != nil {
+			return errors.New("cannot set restricted database search path")
+		}
+		return nil
+	}))
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(30 * time.Minute)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+	return db, nil
 }
 
 func requiredEnv(name string) (string, error) {
@@ -221,15 +282,11 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	db, err := sql.Open("pgx", dsn)
+	db, err := openWorkerDB(dsn)
 	if err != nil {
-		return errors.New("open observation PostgreSQL connection")
+		return err
 	}
 	defer db.Close()
-	db.SetMaxOpenConns(10)
-	db.SetMaxIdleConns(5)
-	db.SetConnMaxLifetime(30 * time.Minute)
-	db.SetConnMaxIdleTime(5 * time.Minute)
 
 	pingCtx, pingCancel := context.WithTimeout(ctx, 10*time.Second)
 	err = db.PingContext(pingCtx)
@@ -242,10 +299,12 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("invalid durable observation store configuration: %w", err)
 	}
-	exporter, err := genaiobs.NewHTTPDurableExporter(receiverURL, receiverToken, &http.Client{Timeout: requestTimeout})
+	baseExporter, err := genaiobs.NewHTTPDurableExporter(receiverURL, receiverToken, &http.Client{Timeout: requestTimeout})
 	if err != nil {
 		return fmt.Errorf("invalid durable receiver configuration: %w", err)
 	}
+	metrics := &workerMetrics{}
+	exporter := measuredExporter{delegate: baseExporter, metrics: metrics}
 	policy := genaiobs.RetryPolicy{
 		MaxAttempts: maxAttempts, InitialBackoff: initialBackoff,
 		MaxBackoff: maxBackoff, Jitter: jitter,
@@ -255,7 +314,6 @@ func run() error {
 		return fmt.Errorf("invalid durable worker configuration: %w", err)
 	}
 
-	metrics := &workerMetrics{}
 	server := &http.Server{
 		Addr: metricsAddr, Handler: metrics.handler(db),
 		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second,
@@ -290,6 +348,7 @@ func run() error {
 		switch {
 		case delivered:
 			metrics.acknowledged.Add(1)
+			metrics.lastSuccessfulDeliveryUnix.Store(time.Now().Unix())
 		case errors.Is(runErr, genaiobs.ErrRetryScheduled):
 			metrics.retryable.Add(1)
 		case errors.Is(runErr, genaiobs.ErrPermanentFailure), errors.Is(runErr, genaiobs.ErrRetryExhausted):
@@ -304,7 +363,7 @@ func run() error {
 
 		if time.Since(lastQueueSample) >= 5*time.Second {
 			sampleCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-			length, sampleErr := store.Len(sampleCtx)
+			stats, sampleErr := store.Stats(sampleCtx)
 			cancel()
 			if sampleErr != nil {
 				metrics.queueReady.Store(false)
@@ -312,7 +371,11 @@ func run() error {
 					metrics.errors.Add(1)
 				}
 			} else {
-				metrics.queueLength.Store(int64(length))
+				metrics.queueLength.Store(int64(stats.Total))
+				metrics.queuePending.Store(int64(stats.Pending))
+				metrics.queueTerminal.Store(int64(stats.Terminal))
+				metrics.queueCapacity.Store(int64(stats.Capacity))
+				metrics.queueOldestPendingAgeNanos.Store(int64(stats.OldestPendingAgeSeconds * float64(time.Second)))
 				metrics.queueReady.Store(true)
 			}
 			lastQueueSample = time.Now()

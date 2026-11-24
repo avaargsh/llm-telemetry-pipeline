@@ -7,7 +7,11 @@ on:
       - ".github/workflows/m11-collector-fault.yml"
       - "deployments/otel-collector-m11.yaml"
       - "deployments/Dockerfile.genai-observation-worker"
+      - "deployments/Dockerfile.genai-observation-receiver"
+      - "deployments/k8s/genai-observation-receiver.yaml"
+      - "deployments/prometheus/**"
       - "deployments/docker-compose-genai-observation-worker.yml"
+      - "cmd/genai-observation-receiver/**"
       - "cmd/genai-observation-worker/**"
       - "Makefile"
       - "docs/m11-durable-http-exporter.md"
@@ -21,7 +25,11 @@ on:
       - ".github/workflows/m11-collector-fault.yml"
       - "deployments/otel-collector-m11.yaml"
       - "deployments/Dockerfile.genai-observation-worker"
+      - "deployments/Dockerfile.genai-observation-receiver"
+      - "deployments/k8s/genai-observation-receiver.yaml"
+      - "deployments/prometheus/**"
       - "deployments/docker-compose-genai-observation-worker.yml"
+      - "cmd/genai-observation-receiver/**"
       - "cmd/genai-observation-worker/**"
       - "Makefile"
       - "docs/m11-durable-http-exporter.md"
@@ -54,6 +62,10 @@ jobs:
           cache: false
       - run: go mod download
       - run: go mod verify
+      - name: Validate Prometheus config and GenAI observation alert rules
+        run: |
+          docker run --rm --entrypoint=promtool -v "$PWD/deployments/prometheus:/etc/prometheus:ro" prom/prometheus:v3.5.0 check config /etc/prometheus/prometheus.yml
+          docker run --rm --entrypoint=promtool -v "$PWD/deployments/prometheus:/etc/prometheus:ro" prom/prometheus:v3.5.0 check rules /etc/prometheus/alert-rules.yml
       - name: Validate the conservative worker Compose overlay
         env:
           GENAI_OBSERVATION_DATABASE_URL: postgres://telemetry:localdev-only@postgres:5432/telemetry?sslmode=disable
@@ -70,7 +82,10 @@ jobs:
               "SELECT to_regclass('public.usage_ledger') IS NOT NULL AND to_regclass('public.event_outbox') IS NOT NULL AND to_regclass('public.genai_observation_queue_state') IS NOT NULL AND to_regclass('public.genai_observation_delivery_receipts') IS NOT NULL
                 AND EXISTS (SELECT 1 FROM information_schema.columns
                   WHERE table_name='genai_observation_queue_state'
-                    AND column_name='delivery_receipt_items')" \
+                    AND column_name='delivery_receipt_items')
+                AND to_regrole('llm_telemetry_observation_receiver') IS NOT NULL
+                AND to_regrole('llm_telemetry_observation_worker') IS NOT NULL
+                AND to_regprocedure('public.ensure_genai_observation_capacity(bigint)') IS NOT NULL" \
               | grep -q t; then
               exit 0
             fi
@@ -78,6 +93,12 @@ jobs:
           done
           docker compose -f deployments/docker-compose.yml logs postgres
           exit 1
+      - name: Create independent receiver database and apply the real migrations
+        run: |
+          docker compose -f deployments/docker-compose.yml exec -T postgres createdb -U telemetry receiver_telemetry
+          for migration in migrations/postgres/*.sql; do
+            docker compose -f deployments/docker-compose.yml exec -T postgres psql -v ON_ERROR_STOP=1 -U telemetry -d receiver_telemetry < "$migration"
+          done
       - name: Start pinned OpenTelemetry Collector contrib
         run: |
           docker run --detach --name m11-otel-collector --network host \
@@ -104,11 +125,16 @@ jobs:
       - name: Durable receiver idempotency receipt semantics
         env:
           TEST_POSTGRES_DSN: postgres://telemetry:localdev-only@localhost:15432/telemetry?sslmode=disable
-        run: go test -race -count=1 -v -run '^TestDurableStore(IdempotencyKeyReceiptSemantics|RejectsInvalidIdempotencyKeys)$' ./internal/genaiobs
+        run: go test -race -count=1 -v -run '^TestDurableStore(IdempotencyKeyReceiptSemantics|DeliveryReceiptTenantIsolationExpiryAndCapacity|RejectsInvalidIdempotencyKeys)$' ./internal/genaiobs
       - name: Durable HTTP exporter → receiver ACK-loss and worker-replacement test
         env:
           TEST_POSTGRES_DSN: postgres://telemetry:localdev-only@localhost:15432/telemetry?sslmode=disable
         run: go test -race -count=1 -v -run '^TestM11DurableHTTPExporterReceiverPersistsKeyAcrossAckLoss$' ./internal/ledger
+      - name: Sender and receiver independent PostgreSQL database ACK-loss recovery
+        env:
+          TEST_POSTGRES_DSN: postgres://telemetry:localdev-only@localhost:15432/telemetry?sslmode=disable
+          TEST_RECEIVER_POSTGRES_DSN: postgres://telemetry:localdev-only@localhost:15432/receiver_telemetry?sslmode=disable
+        run: go test -race -count=1 -v -run '^TestM11DurableHTTPExporterReceiverUsesIndependentDatabases$' ./internal/ledger
       - name: Collect Collector and PostgreSQL logs
         if: always()
         run: |

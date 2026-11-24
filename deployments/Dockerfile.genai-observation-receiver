@@ -1,0 +1,15 @@
+FROM golang:1.27.4-alpine AS build
+ENV GOTOOLCHAIN=local
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN test "$(go env GOVERSION)" = go1.27.4 && go mod download && go mod verify
+COPY cmd/genai-observation-receiver ./cmd/genai-observation-receiver
+COPY internal ./internal
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /genai-observation-receiver ./cmd/genai-observation-receiver
+
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates && addgroup -S -g 10001 telemetry && adduser -S -D -H -u 10001 -G telemetry telemetry
+COPY --from=build /genai-observation-receiver /usr/local/bin/genai-observation-receiver
+USER 10001:10001
+EXPOSE 4318
+ENTRYPOINT ["/usr/local/bin/genai-observation-receiver"]
