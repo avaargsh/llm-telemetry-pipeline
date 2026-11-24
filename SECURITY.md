@@ -32,3 +32,31 @@ contact address or response-time guarantee is invented here.
 
 See [OSS readiness](docs/oss-readiness.md) for outstanding ownership,
 license and publication requirements.
+
+
+## Go vulnerability scan
+
+The proposed `go-vulnerability-scan` workflow scans the exact checked-out
+commit using the Go version declared in `go.mod` and a separately installed,
+version-pinned `govulncheck` v1.10.0. It runs on pull requests, pushes to
+`master`, manual dispatch, and weekly after the workflow is merged.
+It uses the official Go vulnerability database; only module queries are
+sent to that database, not repository source code. See
+[Go vulnerability management](https://go.dev/doc/security/vuln/) and
+[scanner documentation](https://pkg.go.dev/golang.org/x/vuln@v1.10.0/cmd/govulncheck).
+
+To reproduce with the configured Go toolchain:
+
+```sh
+GOTOOLCHAIN=local go install golang.org/x/vuln/cmd/govulncheck@v1.10.0
+GOTOOLCHAIN=local "$(go env GOPATH)/bin/govulncheck" -show verbose ./...
+```
+
+The workflow preserves the exact commit, run identity, scan timestamp,
+compiler/scanner build information and text output. A nonzero scanner or
+log-writer exit is a failed job; findings must be triaged against the
+affected version and reachable call paths, then fixed and retested.
+Do not use a JSON-only scan's zero exit code as a clean security verdict.
+A source scan is not comprehensive image, OS-package, secret, license,
+runtime-configuration or production-security verification. A green result
+reflects the database and build configuration at scan time only.
