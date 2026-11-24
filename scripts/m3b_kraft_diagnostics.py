@@ -16,7 +16,8 @@ import subprocess
 import tempfile
 
 NODES = ("broker1", "broker2", "broker3")
-KAFKA_IMAGE_REF = "apache/kafka:4.1.0@sha256:bff074a5d0051dbc0bbbcd25b045bb1fe84833ec0d3c7c965d1797dd289ec88f"
+DEFAULT_KAFKA_IMAGE_REF = "apache/kafka:4.1.0@sha256:bff074a5d0051dbc0bbbcd25b045bb1fe84833ec0d3c7c965d1797dd289ec88f"
+KAFKA_IMAGE_REF = DEFAULT_KAFKA_IMAGE_REF
 META_KEYS = frozenset(("node.id", "cluster.id", "directory.id"))
 QUORUM_KEYS = frozenset(("ClusterId", "LeaderId", "LeaderEpoch",
                          "HighWatermark", "CurrentVoters", "CurrentObservers",
@@ -42,13 +43,65 @@ def parse_quorum(raw):
     return parsed
 
 
+def expected_image_ref():
+    return os.getenv("M3B_KAFKA_IMAGE", DEFAULT_KAFKA_IMAGE_REF)
+
+
+def image_reference_identity(image_ref):
+    match = re.fullmatch(r"apache/kafka:(\\d+\\.\\d+\\.\\d+)@sha256:([0-9a-f]{64})",
+                         image_ref or "")
+    if not match:
+        return "", ""
+    return match.group(1), "apache/kafka@sha256:" + match.group(2)
+
+
+def parse_java_identity(raw):
+    allowed = {
+        "java.runtime.version": "java_runtime_version",
+        "java.vendor": "java_vendor",
+        "java.vm.name": "java_vm_name",
+    }
+    result = {}
+    for line in raw.splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key.strip() in allowed:
+            result[allowed[key.strip()]] = value.strip()[:160]
+    return result
+
+
+def container_runtime_identity(service):
+    kafka, err = command([*COMPOSE, "exec", "-T", service,
+                          "/opt/kafka/bin/kafka-topics.sh", "--version"], timeout=10)
+    if err:
+        return {}, "kafka_version:" + err
+    match = re.search(r"(?m)^\\s*(\\d+\\.\\d+\\.\\d+)\\s*$", kafka)
+    if not match:
+        return {}, "invalid_kafka_version"
+    java, err = command([*COMPOSE, "exec", "-T", service,
+                         "java", "-XshowSettings:properties", "-version"],
+                        timeout=10, include_stderr=True)
+    if err:
+        return {}, "java_identity:" + err
+    identity = parse_java_identity(java)
+    required = {"java_runtime_version", "java_vendor", "java_vm_name"}
+    if set(identity) != required or not all(identity.values()):
+        return {}, "incomplete_java_identity"
+    identity["kafka_version"] = match.group(1)
+    return identity, ""
+
+
 def assess(nodes):
     findings = []
     expected_ips = {name: nodes.get(name, {}).get("container_ipv4", "")
                     for name in NODES}
+    expected_ref = expected_image_ref()
+    expected_version, expected_repo_digest = image_reference_identity(expected_ref)
+    if not expected_version:
+        findings.append("configured Kafka image must use an exact version and sha256 digest")
     cluster = None
     directory_seen = set()
-    image_ids = set()
+    image_ids, repo_digests, platforms = set(), set(), set()
+    kafka_versions, java_identities = set(), set()
     for name in NODES:
         n = nodes.get(name, {})
         expected = int(name[-1])
@@ -68,13 +121,34 @@ def assess(nodes):
             directory_seen.add(directory_id)
         if not expected_ips[name]:
             findings.append(f"{name}: no Docker container IPv4")
-        if n.get("image_ref") != KAFKA_IMAGE_REF:
-            findings.append(f"{name}: Kafka image reference differs from pinned digest")
+        if n.get("image_ref") != expected_ref:
+            findings.append(f"{name}: Kafka image reference differs from configured pinned digest")
+        repo_digest = n.get("repo_digest", "")
+        if repo_digest != expected_repo_digest:
+            findings.append(f"{name}: actual repo digest differs from requested image digest")
+        else:
+            repo_digests.add(repo_digest)
         image_id = n.get("image_id", "")
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
             findings.append(f"{name}: missing Docker image ID")
         else:
             image_ids.add(image_id)
+        platform = n.get("platform", "")
+        if not re.fullmatch(r"linux/(?:amd64|arm64)", platform):
+            findings.append(f"{name}: missing or unsupported Docker image platform")
+        else:
+            platforms.add(platform)
+        kafka_version = n.get("kafka_version", "")
+        if kafka_version != expected_version:
+            findings.append(f"{name}: Kafka runtime version does not match pinned image tag")
+        elif kafka_version:
+            kafka_versions.add(kafka_version)
+        java_identity = tuple(n.get(key, "") for key in (
+            "java_runtime_version", "java_vendor", "java_vm_name"))
+        if not all(java_identity):
+            findings.append(f"{name}: incomplete Java runtime identity")
+        else:
+            java_identities.add(java_identity)
         for destination in NODES:
             resolved = n.get("dns_from_node", {}).get(destination, "")
             if not resolved:
@@ -83,16 +157,25 @@ def assess(nodes):
                 findings.append(f"{name}: dns {destination} does not match container IPv4")
     if len(image_ids) > 1:
         findings.append("Kafka image IDs differ across brokers")
+    if len(repo_digests) > 1:
+        findings.append("Kafka repo digests differ across brokers")
+    if len(platforms) > 1:
+        findings.append("Kafka image platforms differ across brokers")
+    if len(kafka_versions) > 1:
+        findings.append("Kafka binary versions differ across brokers")
+    if len(java_identities) > 1:
+        findings.append("Java runtime identity differs across brokers")
     return findings
 
 
-def command(argv, timeout=9):
-    """No shell, no raw command stderr in receipts."""
+def command(argv, timeout=9, include_stderr=False):
+    """No shell; stderr is included only for allowlisted runtime-version parsing."""
     try:
         proc = subprocess.run(argv, capture_output=True, text=True,
                               check=False, timeout=timeout)
         if proc.returncode == 0:
-            return proc.stdout[:16384], ""
+            output = proc.stdout + (proc.stderr if include_stderr else "")
+            return output[:16384], ""
         return "", "exit_nonzero"
     except subprocess.TimeoutExpired:
         return "", "timeout"
@@ -121,16 +204,32 @@ def container_ipv4(service):
 def container_image_identity(service):
     cid, err = command([*COMPOSE, "ps", "-q", service], timeout=5)
     if err or not cid.strip():
-        return "", "", err or "missing_container"
+        return "", "", "", "", err or "missing_container"
     output, err = command(
-        ["docker", "inspect", "--format", "{{.Config.Image}}|{{.Image}}",
+        ["docker", "inspect", "--format",
+         "{{.Config.Image}}|{{.Image}}|{{.Os}}/{{.Architecture}}",
          cid.strip()], timeout=5)
     if err:
-        return "", "", err
-    image_ref, separator, image_id = output.strip().partition("|")
-    if not separator or not image_ref or not image_id:
-        return "", "", "invalid_image_identity"
-    return image_ref, image_id, ""
+        return "", "", "", "", err
+    fields = output.strip().split("|")
+    if len(fields) != 3 or not all(fields):
+        return "", "", "", "", "invalid_image_identity"
+    image_ref, image_id, platform = fields
+    repo_output, err = command(
+        ["docker", "image", "inspect", "--format", "{{json .RepoDigests}}",
+         image_id], timeout=5)
+    if err:
+        return "", "", "", "", "repo_digest:" + err
+    try:
+        repo_digests = json.loads(repo_output)
+    except (TypeError, ValueError):
+        return "", "", "", "", "invalid_repo_digests"
+    _, expected_repo_digest = image_reference_identity(expected_image_ref())
+    matches = [item for item in repo_digests
+               if isinstance(item, str) and item == expected_repo_digest]
+    if len(matches) != 1:
+        return "", "", "", "", "requested_digest_not_present_in_repo_digests"
+    return image_ref, image_id, matches[0], platform, ""
 
 
 def run_context():
@@ -149,9 +248,14 @@ def snapshot(phase):
         n["container_ipv4"], err = container_ipv4(node)
         if err:
             n["errors"].append("container_ipv4:" + err)
-        n["image_ref"], n["image_id"], err = container_image_identity(node)
+        (n["image_ref"], n["image_id"], n["repo_digest"],
+         n["platform"], err) = container_image_identity(node)
         if err:
             n["errors"].append("image_identity:" + err)
+        runtime, err = container_runtime_identity(node)
+        n.update(runtime)
+        if err:
+            n["errors"].append("runtime_identity:" + err)
         meta, err = command([*COMPOSE, "exec", "-T", node,
                              "cat", "/tmp/kraft-combined-logs/meta.properties"])
         n["meta"] = parse_properties(meta)
@@ -233,7 +337,13 @@ def main():
             name: {
                 "docker_ipv4": node["container_ipv4"],
                 "kafka_image_ref": node["image_ref"],
+                "kafka_repo_digest": node["repo_digest"],
                 "docker_image_id": node["image_id"],
+                "platform": node["platform"],
+                "kafka_version": node["kafka_version"],
+                "java_runtime_version": node["java_runtime_version"],
+                "java_vendor": node["java_vendor"],
+                "java_vm_name": node["java_vm_name"],
                 "persisted_node_id": node["meta"].get("node.id"),
                 "directory_id": node["meta"].get("directory.id"),
                 "quorum_leader_id": node["quorum"].get("LeaderId"),
