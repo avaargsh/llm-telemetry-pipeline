@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -367,6 +368,47 @@ func TestGenAIObservationsDoNotChangeLedger(t *testing.T) {
 		if _, ok := q.Pop(); ok || q.Len() != 0 {
 			t.Fatal("HTTP queue not drained")
 		}
+	})
+
+	t.Run("exporter retries and explicit terminal drop remain non-authoritative", func(t *testing.T) {
+		q, err := genaiobs.NewQueue(2)
+		if err != nil { t.Fatal(err) }
+		s := base
+		s.Attributes = append(append([]genaiobs.Attribute(nil), base.Attributes...),
+			genaiobs.Attribute{Key:"gen_ai.usage.input_tokens",Value:int64(41)},
+			genaiobs.Attribute{Key:"gen_ai.usage.output_tokens",Value:int64(0)})
+		if err := q.Submit(genaiobs.Scope{TenantID:tenantA},genaiobs.Version,s); err != nil { t.Fatal(err) }
+		exporter := &genAIWorkerTestExporter{results:[]error{errors.New("temporary"),nil}}
+		policy := genaiobs.RetryPolicy{MaxAttempts:3,InitialBackoff:time.Millisecond,MaxBackoff:time.Millisecond,Jitter:0}
+		worker, err := genaiobs.NewWorker(q,exporter,policy)
+		if err != nil { t.Fatal(err) }
+		if delivered,err := worker.RunOnce(ctx); delivered || !errors.Is(err,genaiobs.ErrRetryScheduled) {
+			t.Fatalf("first attempt delivered=%v err=%v",delivered,err)
+		}
+		if q.Len()!=1 { t.Fatal("transient failure removed observation") }
+		unchanged(t)
+		time.Sleep(2*time.Millisecond)
+		if delivered,err := worker.RunOnce(ctx); !delivered || err!=nil {
+			t.Fatalf("retry delivered=%v err=%v",delivered,err)
+		}
+		if q.Len()!=0 || len(exporter.seen)!=2 { t.Fatal("ACK did not remove exactly one observation") }
+		if exporter.seen[0].TenantID!=tenantA || exporter.seen[1].InputTokens==nil || *exporter.seen[1].InputTokens!=41 {
+			t.Fatal("exporter received wrong trusted observation")
+		}
+		unchanged(t)
+
+		if err := q.Submit(genaiobs.Scope{TenantID:tenantB},genaiobs.Version,s); err != nil { t.Fatal(err) }
+		permanent := &genAIWorkerTestExporter{results:[]error{genaiobs.Permanent(errors.New("invalid destination"))}}
+		dropWorker, err := genaiobs.NewWorker(q,permanent,policy)
+		if err != nil { t.Fatal(err) }
+		if _,err := dropWorker.RunOnce(ctx); !errors.Is(err,genaiobs.ErrPermanentFailure) {
+			t.Fatalf("expected terminal permanent failure, got %v",err)
+		}
+		if q.Len()!=1 { t.Fatal("permanent failure silently dropped") }
+		unchanged(t)
+		dropped,err:=dropWorker.DropFailed()
+		if err!=nil || dropped.TenantID!=tenantB || q.Len()!=0 { t.Fatalf("explicit drop: %+v %v",dropped,err) }
+		unchanged(t)
 	})
 	// The authoritative retry remains a duplicate with exactly the same rows.
 	if result, err := store.Record(ctx, first); err != nil || result != Duplicate {

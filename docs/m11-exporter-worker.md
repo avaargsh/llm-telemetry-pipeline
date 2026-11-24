@@ -11,3 +11,5 @@ ACK contract: exporter nil means the receiver has acknowledged the complete obse
 Loss contract: both Queue contents and Worker retry/lease state are process-local volatile memory. Process crash/restart loses all queued and in-flight observations and resets backoff. There is no persistence, restart recovery, dead-letter store, or durable ACK. This slice does not write PostgreSQL Ledger/Outbox or billing authority. The existing cmd/outbox-relay remains a distinct authoritative Kafka relay with its own persisted lease/ACK protocol.
 
 Hosted CI must validate Go race/vet/build and the existing real PostgreSQL ledger/outbox invariance suite. No production worker loop, external collector transport, or delivery SLO is claimed.
+
+Hosted PostgreSQL regression: the real Ledger/Outbox snapshot test now drives the M11.3 Worker through a transient export failure, capped retry and downstream ACK, then a permanent failure with explicit DropFailed. Every transition compares complete authoritative Ledger and Outbox rows. This proves worker retry/drop has no billing authority; it does not prove persistence or restart recovery.
