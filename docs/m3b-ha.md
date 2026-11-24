@@ -431,3 +431,7 @@ target at message send time. If either experiment cannot finish the real
 Kafka recovery, it remains a visible failed experiment rather than being
 declared a passing HA release. Keep Issue #28 open until causality is
 verified. No production IPAM, HA SLO or Apache Kafka defect claims.
+
+## Repeated network-control exposure evidence
+
+The network A/B workflow runs three independent jobs per profile (six total), with trial-specific artifacts. The comparator reports `endpoint_exposure` independently of verified recovery: `PINNED_CONTROL`, `NO_ADDRESS_CHANGE_OBSERVED`, `ADDRESS_CHANGE_WITHOUT_REASSIGNMENT`, or `ADDRESS_REASSIGNMENT_OBSERVED`. The last category requires a previously owned IPv4 address to be observed under another broker after recovery. Before/after snapshots cannot establish when a transient address changed or prove JVM cache causality. No observed change is an unexposed trial, not a falsification of the endpoint-reassignment hypothesis. All existing RF3/ISR3, no-ACK and sealed-event readback gates remain mandatory. Missing or malformed drift observations fail closed. This is a bounded observational repeat, not a forced IP reassignment experiment or a production SLO. Issue #28 remains open.
