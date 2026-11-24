@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 profile="${M3B_NETWORK_AB_MODE:-pinned}"
 compose_file="${M3B_HA_COMPOSE_FILE:-deployments/docker-compose-ha.yml}"
 case "$profile:$compose_file" in
-  pinned:deployments/docker-compose-ha.yml|dynamic:deployments/docker-compose-ha-dynamic.yml) ;;
+  pinned:deployments/docker-compose-ha.yml|dynamic:deployments/docker-compose-ha-dynamic.yml|dynamic:deployments/docker-compose-ha-dns-ttl-zero.yml) ;;
   *) echo "invalid A/B control: $profile:$compose_file" >&2; exit 2 ;;
 esac
 export M3B_HA_COMPOSE_FILE="$compose_file"
@@ -91,6 +91,22 @@ for i in $(seq 1 90); do
   sleep 2
 done
 if (( created != 1 )); then echo "RF3 topic creation timed out" >&2; exit 1; fi
+if [[ "$compose_file" == deployments/docker-compose-ha-dns-ttl-zero.yml ]]; then
+  for node in broker1 broker2 broker3; do
+    "${compose[@]}" exec -T "$node" sh -ec '
+      grep -Fxq "networkaddress.cache.ttl=0" /etc/kafka/m3b-dns-ttl-zero.security
+      for f in /proc/[0-9]*/cmdline; do
+        args=$(tr "\000" "\n" < "$f" 2>/dev/null) || continue
+        if printf "%s\n" "$args" | grep -Fxq kafka.Kafka &&
+           printf "%s\n" "$args" | grep -Fxq -- "-Djava.security.properties=/etc/kafka/m3b-dns-ttl-zero.security"; then
+          exit 0
+        fi
+      done
+      exit 1
+    '
+    echo "DNS TTL experiment: broker JVM startup option and mounted policy verified for $node"
+  done
+fi
 capture before_fault
 python3 - <<'PY'
 import json,os
