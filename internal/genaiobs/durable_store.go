@@ -112,9 +112,26 @@ func (s *DurableStore) EnqueueBatch(ctx context.Context,observations []Observati
 	if _,err=tx.ExecContext(ctx,"SELECT pg_advisory_xact_lock($1)",durableCapacityAdvisoryLock);err!=nil {
 		return fmt.Errorf("lock durable observation capacity: %w",err)
 	}
-	if _,err=tx.ExecContext(ctx,"DELETE FROM genai_observation_receipts WHERE expires_at<=now()");err!=nil {
-		return fmt.Errorf("expire observation dedupe receipts: %w",err)
+	var queueCount,receiptCount,configuredCapacity int64
+	if err=tx.QueryRowContext(ctx,`SELECT queue_items,receipt_items,capacity_limit
+FROM genai_observation_queue_state WHERE singleton=true FOR UPDATE`).Scan(&queueCount,&receiptCount,&configuredCapacity);err!=nil {
+		return fmt.Errorf("lock durable observation counters: %w",err)
 	}
+	if configuredCapacity==0 {
+		configuredCapacity=int64(s.Capacity)
+		if _,err=tx.ExecContext(ctx,"UPDATE genai_observation_queue_state SET capacity_limit=$1 WHERE singleton=true",configuredCapacity);err!=nil {
+			return fmt.Errorf("configure durable observation capacity: %w",err)
+		}
+	} else if configuredCapacity!=int64(s.Capacity) {
+		return ErrInvalidDurableConfig
+	}
+	expiredResult,expireErr:=tx.ExecContext(ctx,"DELETE FROM genai_observation_receipts WHERE expires_at<=now()")
+	if expireErr!=nil { return fmt.Errorf("expire observation dedupe receipts: %w",expireErr) }
+	expired,expireErr:=expiredResult.RowsAffected()
+	if expireErr!=nil { return expireErr }
+	receiptCount-=expired
+	if receiptCount<0 { return errors.New("durable observation receipt counter is inconsistent") }
+	var queueAdded,receiptAdded int64
 	for _,item:=range items {
 		o:=item.o
 		var receiptHash string
@@ -131,6 +148,7 @@ WHERE tenant_id=$1 AND trace_id=$2 AND span_id=$3 FOR SHARE`,o.TenantID,o.TraceI
 			continue
 		}
 		if err!=nil { return fmt.Errorf("write observation dedupe receipt: %w",err) }
+		receiptAdded++
 		var input,output any
 		if o.InputTokens!=nil { input=*o.InputTokens }
 		if o.OutputTokens!=nil { output=*o.OutputTokens }
@@ -143,7 +161,9 @@ ON CONFLICT(tenant_id,trace_id,span_id) DO NOTHING`,
 			o.RequestModel,o.ResponseModel,o.Status,input,output,item.hash)
 		if insertErr!=nil { return fmt.Errorf("insert durable observation: %w",insertErr) }
 		affected,insertErr:=result.RowsAffected();if insertErr!=nil { return insertErr }
-		if affected==0 {
+		if affected==1 {
+			queueAdded++
+		} else {
 			var existing string
 			if err=tx.QueryRowContext(ctx,`SELECT payload_hash FROM genai_observations
 WHERE tenant_id=$1 AND trace_id=$2 AND span_id=$3 FOR SHARE`,o.TenantID,o.TraceID,o.SpanID).Scan(&existing);err!=nil {
@@ -152,16 +172,13 @@ WHERE tenant_id=$1 AND trace_id=$2 AND span_id=$3 FOR SHARE`,o.TenantID,o.TraceI
 			if strings.TrimSpace(existing)!=item.hash { return ErrObservationConflict }
 		}
 	}
-	var count int
-	if err=tx.QueryRowContext(ctx,"SELECT count(*) FROM genai_observations").Scan(&count);err!=nil {
-		return fmt.Errorf("count durable observations: %w",err)
+	if queueCount+queueAdded>configuredCapacity || receiptCount+receiptAdded>MaxDurableReceiptCapacity {
+		return ErrDurableQueueFull
 	}
-	if count>s.Capacity { return ErrDurableQueueFull }
-	var receipts int
-	if err=tx.QueryRowContext(ctx,"SELECT count(*) FROM genai_observation_receipts").Scan(&receipts);err!=nil {
-		return fmt.Errorf("count observation dedupe receipts: %w",err)
+	if _,err=tx.ExecContext(ctx,`UPDATE genai_observation_queue_state
+SET queue_items=$1,receipt_items=$2 WHERE singleton=true`,queueCount+queueAdded,receiptCount+receiptAdded);err!=nil {
+		return fmt.Errorf("update durable observation counters: %w",err)
 	}
-	if receipts>MaxDurableReceiptCapacity { return ErrDurableQueueFull }
 	if err=tx.Commit();err!=nil { return fmt.Errorf("commit durable observation admission; retry same identities: %w",err) }
 	return nil
 }
@@ -223,10 +240,16 @@ func (s *DurableStore) Ack(ctx context.Context,d Delivery,worker string)error {
 	if err:=s.requireDB();err!=nil { return err }
 	if ctx==nil { return errors.New("context required") }
 	if d.ID<1 || d.Attempts<1 || !identifier(worker,128) { return ErrDurableLeaseLost }
-	result,err:=s.DB.ExecContext(ctx,`DELETE FROM genai_observations
+	tx,err:=s.DB.BeginTx(ctx,nil);if err!=nil { return err }
+	defer tx.Rollback()
+	result,err:=tx.ExecContext(ctx,`DELETE FROM genai_observations
 WHERE observation_id=$1 AND lease_owner=$2 AND attempts=$3 AND lease_until>now() AND terminal_at IS NULL`,d.ID,worker,d.Attempts)
 	if err!=nil { return fmt.Errorf("ack durable observation: %w",err) }
 	n,err:=result.RowsAffected();if err!=nil { return err };if n!=1 { return ErrDurableLeaseLost }
+	result,err=tx.ExecContext(ctx,"UPDATE genai_observation_queue_state SET queue_items=queue_items-1 WHERE singleton=true AND queue_items>0")
+	if err!=nil { return fmt.Errorf("decrement durable queue counter: %w",err) }
+	n,err=result.RowsAffected();if err!=nil { return err };if n!=1 { return errors.New("durable observation queue counter is inconsistent") }
+	if err=tx.Commit();err!=nil { return fmt.Errorf("commit durable observation ACK: %w",err) }
 	return nil
 }
 
@@ -291,12 +314,18 @@ WHERE observation_id=$1 AND terminal_at IS NOT NULL`,id)
 func (s *DurableStore) DropFailed(ctx context.Context,id int64)(Observation,error) {
 	if err:=s.requireDB();err!=nil { return Observation{},err }
 	if ctx==nil || id<1 { return Observation{},ErrNoFailedObservation }
-	d,err:=scanDelivery(s.DB.QueryRowContext(ctx,`DELETE FROM genai_observations
+	tx,err:=s.DB.BeginTx(ctx,nil);if err!=nil { return Observation{},err }
+	defer tx.Rollback()
+	d,err:=scanDelivery(tx.QueryRowContext(ctx,`DELETE FROM genai_observations
 WHERE observation_id=$1 AND terminal_at IS NOT NULL
 RETURNING observation_id,schema_version,tenant_id,trace_id,span_id,request_id,attempt_id,
  provider,operation,request_model,response_model,status,input_tokens,output_tokens,attempts,now()`,id))
 	if errors.Is(err,sql.ErrNoRows) { return Observation{},ErrNoFailedObservation }
 	if err!=nil { return Observation{},fmt.Errorf("drop terminal observation: %w",err) }
+	result,err:=tx.ExecContext(ctx,"UPDATE genai_observation_queue_state SET queue_items=queue_items-1 WHERE singleton=true AND queue_items>0")
+	if err!=nil { return Observation{},fmt.Errorf("decrement durable queue counter: %w",err) }
+	n,err:=result.RowsAffected();if err!=nil { return Observation{},err };if n!=1 { return Observation{},errors.New("durable observation queue counter is inconsistent") }
+	if err=tx.Commit();err!=nil { return Observation{},fmt.Errorf("commit terminal observation drop: %w",err) }
 	return d.Observation,nil
 }
 

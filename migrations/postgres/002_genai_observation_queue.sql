@@ -47,3 +47,14 @@ CREATE INDEX IF NOT EXISTS idx_genai_observations_pending
 CREATE INDEX IF NOT EXISTS idx_genai_observations_terminal
     ON genai_observations (terminal_at, observation_id)
     WHERE terminal_at IS NOT NULL;
+
+-- O(1) capacity counters avoid a full table scan on every telemetry batch.
+-- The singleton capacity is initialized by the first writer and must match on all replicas.
+CREATE TABLE IF NOT EXISTS genai_observation_queue_state (
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    queue_items BIGINT NOT NULL DEFAULT 0 CHECK (queue_items >= 0),
+    receipt_items BIGINT NOT NULL DEFAULT 0 CHECK (receipt_items >= 0),
+    capacity_limit BIGINT NOT NULL DEFAULT 0 CHECK (capacity_limit >= 0)
+);
+INSERT INTO genai_observation_queue_state(singleton)
+VALUES(TRUE) ON CONFLICT(singleton) DO NOTHING;

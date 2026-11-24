@@ -33,6 +33,10 @@ func openDurableTestStore(t *testing.T, capacity int) (*DurableStore,*sql.DB) {
 	t.Cleanup(func(){
 		_,_=db.Exec("DELETE FROM genai_observations WHERE tenant_id LIKE 'durable-test-%'")
 		_,_=db.Exec("DELETE FROM genai_observation_receipts WHERE tenant_id LIKE 'durable-test-%'")
+		_,_=db.Exec(`UPDATE genai_observation_queue_state
+SET queue_items=(SELECT count(*) FROM genai_observations),
+    receipt_items=(SELECT count(*) FROM genai_observation_receipts)
+WHERE singleton=true`)
 		_ = db.Close()
 	})
 	return store,db
