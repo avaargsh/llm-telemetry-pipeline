@@ -172,7 +172,7 @@ def java_runtime_identity(service):
         )
         if proc.returncode != 0:
             return {}, "exit_nonzero"
-        identity = parse_java_properties(proc.stdout + "\\n" + proc.stderr)
+        identity = parse_java_properties(proc.stdout + "\n" + proc.stderr)
         if not all(identity.get(key) for key in JAVA_RUNTIME_KEYS):
             return identity, "missing_runtime_properties"
         return identity, ""
