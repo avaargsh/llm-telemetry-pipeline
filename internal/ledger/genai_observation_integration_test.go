@@ -138,6 +138,65 @@ func TestGenAIObservationsDoNotChangeLedger(t *testing.T) {
 		}
 		unchanged(t)
 	})
+	t.Run("bounded queue saturation replay and drain", func(t *testing.T) {
+		q, err := genaiobs.NewQueue(2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		scopeA := genaiobs.Scope{TenantID: tenantA}
+		scopeB := genaiobs.Scope{TenantID: tenantB}
+		replay := base
+		replay.Attributes = append(append([]genaiobs.Attribute(nil), base.Attributes...),
+			genaiobs.Attribute{Key: "gen_ai.usage.input_tokens", Value: int64(999999)})
+		if err := q.Submit(scopeA, genaiobs.Version, base); err != nil {
+			t.Fatal(err)
+		}
+		unchanged(t)
+		if err := q.Submit(scopeA, genaiobs.Version, replay); err != nil {
+			t.Fatal(err)
+		}
+		unchanged(t)
+		pending := base
+		pending.RequestID = "ledger-m10-queue-unfinalized"
+		pending.Attributes = append(append([]genaiobs.Attribute(nil), base.Attributes...),
+			genaiobs.Attribute{Key: "tenant.id", Value: tenantA})
+		if err := q.Submit(scopeB, genaiobs.Version, pending); err != genaiobs.ErrQueueFull {
+			t.Fatalf("expected explicit overload: %v", err)
+		}
+		if q.Len() != 2 {
+			t.Fatal("overload changed queue length")
+		}
+		unchanged(t)
+		o, ok := q.Pop()
+		if !ok || o.TenantID != tenantA || o.RequestID != base.RequestID || o.InputTokens != nil {
+			t.Fatal("oldest queued observation changed")
+		}
+		unchanged(t)
+		if err := q.Submit(scopeB, genaiobs.Version, pending); err != nil {
+			t.Fatal(err)
+		}
+		unchanged(t)
+		o, ok = q.Pop()
+		if !ok || o.TenantID != tenantA || o.RequestID != base.RequestID || o.InputTokens == nil || *o.InputTokens != 999999 {
+			t.Fatal("replayed observation changed")
+		}
+		unchanged(t)
+		o, ok = q.Pop()
+		if !ok || o.TenantID != tenantB || o.RequestID != pending.RequestID {
+			t.Fatal("trusted tenant or queued request changed")
+		}
+		unchanged(t)
+		if _, ok := q.Pop(); ok || q.Len() != 0 {
+			t.Fatal("queue not drained")
+		}
+		invalid := base
+		invalid.Attributes = append(append([]genaiobs.Attribute(nil), base.Attributes...),
+			genaiobs.Attribute{Key: "gen_ai.usage.input_tokens", Value: int64(-1)})
+		if err := q.Submit(scopeA, genaiobs.Version, invalid); err != genaiobs.ErrInvalid || q.Len() != 0 {
+			t.Fatalf("invalid observation retained: %v", err)
+		}
+		unchanged(t)
+	})
 	// The authoritative retry remains a duplicate with exactly the same rows.
 	if result, err := store.Record(ctx, first); err != nil || result != Duplicate {
 		t.Fatalf("authoritative retry changed semantics: %v %v", result, err)
