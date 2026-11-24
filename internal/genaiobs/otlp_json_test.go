@@ -55,3 +55,26 @@ func TestOTLPJSONLimits(t *testing.T) {
 		}
 	}
 }
+
+func TestOTLPJSONRejectsDuplicateObjectMembers(t *testing.T) {
+    cases := map[string]string{
+        "duplicate traceId": strings.Replace(wireSpan, `"traceId":"0123456789ABCDEF0123456789ABCDEF"`, `"traceId":"0123456789ABCDEF0123456789ABCDEF","traceId":"1123456789ABCDEF0123456789ABCDEF"`, 1),
+        "duplicate status code": strings.Replace(wireSpan, `"code":1`, `"code":1,"code":2`, 1),
+        "duplicate attribute value": strings.Replace(wireSpan, `"stringValue":"openai"`, `"stringValue":"openai","stringValue":"other"`, 1),
+        "duplicate envelope member": strings.Replace(wireBody(wireSpan), `"resourceSpans":[`, `"resourceSpans":[],"resourceSpans":[`, 1),
+        "case-folded known field collision": strings.Replace(wireSpan, `"traceId":"0123456789ABCDEF0123456789ABCDEF"`, `"traceId":"0123456789ABCDEF0123456789ABCDEF","TraceId":"1123456789ABCDEF0123456789ABCDEF"`, 1),
+    }
+    for name, body := range cases {
+        t.Run(name, func(t *testing.T) {
+            if name == "duplicate envelope member" {
+                if got, err := DecodeOTLPJSON([]byte(body)); !errors.Is(err, ErrInvalidOTLPJSON) || got != nil {
+                    t.Fatalf("accepted ambiguous envelope: %v", err)
+                }
+                return
+            }
+            if got, err := DecodeOTLPJSON(wireBody(body)); !errors.Is(err, ErrInvalidOTLPJSON) || got != nil {
+                t.Fatalf("accepted ambiguous span: %v", err)
+            }
+        })
+    }
+}
