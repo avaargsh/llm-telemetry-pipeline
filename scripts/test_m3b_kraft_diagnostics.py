@@ -143,7 +143,7 @@ user.name = runner
     java.vm.name = OpenJDK 64-Bit Server VM
 """
         with patch.object(diagnostics, "command", side_effect=[
-            ("4.1.2\\n", ""), (java, "")
+            ("4.1.2\n", ""), (java, "")
         ]) as run:
             identity, error = diagnostics.container_runtime_identity("broker1")
         self.assertEqual(error, "")
