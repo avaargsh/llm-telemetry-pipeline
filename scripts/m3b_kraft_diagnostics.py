@@ -224,6 +224,8 @@ def container_image_identity(service):
         repo_digests = json.loads(repo_output)
     except (TypeError, ValueError):
         return "", "", "", "", "invalid_repo_digests"
+    if not isinstance(repo_digests, list):
+        return "", "", "", "", "invalid_repo_digests"
     _, expected_repo_digest = image_reference_identity(expected_image_ref())
     matches = [item for item in repo_digests
                if isinstance(item, str) and item == expected_repo_digest]
@@ -244,7 +246,14 @@ def snapshot(phase):
     nodes = {}
     for node in NODES:
         number = int(node[-1])
-        n = {"expected_id": number, "errors": []}
+        n = {
+            "expected_id": number,
+            "errors": [],
+            "kafka_version": "",
+            "java_runtime_version": "",
+            "java_vendor": "",
+            "java_vm_name": "",
+        }
         n["container_ipv4"], err = container_ipv4(node)
         if err:
             n["errors"].append("container_ipv4:" + err)
