@@ -185,13 +185,21 @@ def load_trial_receipts(directory, expected_trials=3):
         f"m3b-kafka-version-{version}-trial-{trial}"
         for version in VERSIONS for trial in range(1, expected_trials + 1)
     }
+    artifact_dirs = {
+        next((parent for parent in path.parents if parent.name in expected_artifacts), None)
+        for path in files
+    }
     require(len(files) == len(expected_artifacts)
-            and {path.parent.name for path in files} == expected_artifacts,
+            and None not in artifact_dirs
+            and {path.name for path in artifact_dirs} == expected_artifacts,
             "expected one comparison receipt from each Kafka-version trial artifact")
     reports = {}
     for path in files:
-        match = re.fullmatch(r"m3b-kafka-version-(4\.1\.[02])-trial-(\d+)",
-                             path.parent.name)
+        artifact_dir = next((parent for parent in path.parents
+                             if parent.name in expected_artifacts), None)
+        require(artifact_dir is not None, "comparison receipt is outside a named trial artifact")
+        match = re.fullmatch(r"m3b-kafka-version-(4\\.1\\.[02])-trial-(\\d+)",
+                             artifact_dir.name)
         require(match is not None, "invalid Kafka version trial artifact name")
         version, trial = match.group(1), int(match.group(2))
         slot = (version, trial)
