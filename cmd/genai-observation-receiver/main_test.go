@@ -35,6 +35,7 @@ func TestLoadCredentialsRejectsMalformedUnknownAndTrailingJSON(t *testing.T) {
 	for name, body := range map[string]string{
 		"empty": "[]",
 		"malformed": "[{\"token\":",
+		"duplicate object field": "[{\"token\":\""+receiverTestToken+"\",\"token\":\""+receiverTestToken+"\",\"tenant_id\":\"tenant-a\"}]",
 		"unknown field": "[{\"token\":\""+receiverTestToken+"\",\"tenant_id\":\"tenant-a\",\"billing_role\":\"admin\"}]",
 		"trailing value": "[{\"token\":\""+receiverTestToken+"\",\"tenant_id\":\"tenant-a\"}] {}",
 		"invalid tenant": "[{\"token\":\""+receiverTestToken+"\",\"tenant_id\":\"tenant with spaces\"}]",
@@ -104,6 +105,14 @@ func TestReceiverMetricsAreBoundedAndClassifyAdmissionResults(t *testing.T) {
 func TestCredentialFilePathMustBeConfigured(t *testing.T) {
 	if credentials, err := loadCredentials(""); err == nil || credentials != nil {
 		t.Fatalf("empty path accepted: %+v %v", credentials, err)
+	}
+}
+
+func TestLoadCredentialsAcceptsTenantIdentifiersSupportedByObservationContract(t *testing.T) {
+	path := writeCredentials(t, "[{\"token\":\""+receiverTestToken+"\",\"tenant_id\":\"_tenant-a\"}]")
+	credentials, err := loadCredentials(path)
+	if err != nil || len(credentials) != 1 || credentials[0].TenantID != "_tenant-a" {
+		t.Fatalf("existing observation identifier rejected: credentials=%v err=%v", credentials, err)
 	}
 }
 
