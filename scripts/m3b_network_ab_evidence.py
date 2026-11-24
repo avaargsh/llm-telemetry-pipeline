@@ -67,7 +67,12 @@ def assess(profile, head, report, audit, sockets, before, after):
            "too few socket samples")
     before_ips,after_ips=_ip_map(before),_ip_map(after)
     changed=sorted(n for n in NODES if before_ips[n]!=after_ips[n])
-    ensure(sorted(audit.get("ip_changed_nodes") or [])==changed,
+    audited_changes=audit.get("ip_changed_nodes")
+    ensure(isinstance(audited_changes,list) and
+           all(isinstance(n,str) and n in NODES for n in audited_changes) and
+           len(set(audited_changes))==len(audited_changes),
+           "missing or invalid audited endpoint changes")
+    ensure(sorted(audited_changes)==changed,
            "audit and snapshots disagree on endpoint changes")
     mismatches=audit.get("observed_voter_target_mismatches")
     ensure(isinstance(mismatches,list),"missing cross-target VOTE counts")
@@ -92,8 +97,17 @@ def assess(profile, head, report, audit, sockets, before, after):
         for current,now in after_ips.items()
         if prior!=current and ip==now
     ]
+    if profile=="pinned":
+        exposure="PINNED_CONTROL"
+    elif reassigned:
+        exposure="ADDRESS_REASSIGNMENT_OBSERVED"
+    elif changed:
+        exposure="ADDRESS_CHANGE_WITHOUT_REASSIGNMENT"
+    else:
+        exposure="NO_ADDRESS_CHANGE_OBSERVED"
     return {
         "schema_version":1, "exact_head":head, "profile":profile,
+        "endpoint_exposure":exposure,
         "result":("RECOVERY_VERIFIED_ENDPOINTS_FIXED" if profile=="pinned"
                   else "RECOVERY_VERIFIED_ENDPOINTS_DYNAMIC_OBSERVED"),
         "initial_ack_count":35, "acknowledged_readback_verified":True,
