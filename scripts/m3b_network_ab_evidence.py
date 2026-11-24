@@ -32,6 +32,7 @@ def _ip_map(snapshot):
         row = nodes[node]
         ensure(isinstance(row,dict),"invalid node row")
         ip = row.get("container_ipv4")
+        ensure(isinstance(ip,str),"invalid Docker IPv4 in snapshot")
         try:
             ensure(ipaddress.ip_address(ip).version==4,"missing Docker IPv4")
         except (ValueError,TypeError):
