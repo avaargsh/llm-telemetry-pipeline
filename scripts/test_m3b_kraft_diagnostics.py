@@ -195,7 +195,7 @@ user.name = runner
         ):
             source = (root / relative).read_text(encoding="utf-8")
             with self.subTest(path=relative):
-                self.assertEqual(source.count('image: "${M3B_KAFKA_IMAGE:-' + pinned + '}"'), 3)
+                self.assertEqual(source.count('image: ${M3B_KAFKA_IMAGE:-' + pinned + '}'), 3)
 
 if __name__ == "__main__":
     unittest.main()
