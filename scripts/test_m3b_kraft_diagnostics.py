@@ -95,6 +95,15 @@ other-secret=never-print
                 nodes = {f"broker{i}": node(i, f"172.22.0.{i+10}") for i in (1, 2, 3)}
                 self.assertIn("missing or invalid expected Kafka image reference", diagnostics.assess(nodes))
 
+    def test_kafka_4_1_2_compose_profile_changes_only_image_reference(self):
+        root = pathlib.Path(__file__).resolve().parents[1]
+        baseline = (root / "deployments/docker-compose-ha.yml").read_text()
+        candidate = (root / "deployments/docker-compose-ha-4.1.2.yml").read_text()
+        baseline_ref = diagnostics.KAFKA_IMAGE_REF
+        candidate_ref = "apache/kafka:4.1.2@sha256:" + "5cc2a2fd93fa2687b44015eee04fb2c3edd9e526bd64bf8bec5ff1e268772e0e"
+        self.assertEqual(candidate.count(candidate_ref), 3)
+        self.assertEqual(candidate.replace(candidate_ref, baseline_ref), baseline)
+
     def test_missing_runtime_image_id_fails_closed(self):
         nodes = {f"broker{i}": node(i, f"172.22.0.{i+10}") for i in (1, 2, 3)}
         nodes["broker1"].pop("image_id")
