@@ -102,11 +102,16 @@ func TestDurableStoreRetryTerminalAndExplicitOperatorActions(t *testing.T) {
 		t.Fatalf("terminal operator listing: %+v %v",terminal,err)
 	}
 	if next,err:=store.Claim(ctx,"worker-c",time.Minute,1);err!=nil||len(next)!=0 { t.Fatalf("terminal row auto-claimed: %d %v",len(next),err) }
-	if err:=store.RetryFailed(ctx,second[0].ID);err!=nil { t.Fatal(err) }
+	// Terminal operator actions must be scoped to the owning tenant.
+	if err:=store.RetryFailed(ctx,"another-tenant",second[0].ID);!errors.Is(err,ErrNoFailedObservation) { t.Fatalf("cross-tenant retry must be hidden: %v",err) }
+	if err:=store.DropFailed(ctx,"another-tenant",second[0].ID);!errors.Is(err,ErrNoFailedObservation) { t.Fatalf("cross-tenant drop must be hidden: %v",err) }
+	if stillTerminal,err:=store.ListTerminal(ctx,tenant,10);err!=nil||len(stillTerminal)!=1 { t.Fatalf("cross-tenant action changed owner row: %+v %v",stillTerminal,err) }
+	if err:=store.RetryFailed(ctx,tenant,second[0].ID);err!=nil { t.Fatal(err) }
 	third,err:=store.Claim(ctx,"worker-c",time.Minute,1);if err!=nil||len(third)!=1||third[0].Attempts!=1 { t.Fatalf("manual retry did not reset: %+v %v",third,err) }
 	if err:=store.MarkTerminal(ctx,third[0],"worker-c","permanent_export_failure");err!=nil { t.Fatal(err) }
-	dropped,err:=store.DropFailed(ctx,third[0].ID);if err!=nil||dropped.TenantID!=tenant { t.Fatalf("explicit drop: %+v %v",dropped,err) }
-	if _,err:=store.DropFailed(ctx,third[0].ID);!errors.Is(err,ErrNoFailedObservation) { t.Fatalf("second drop: %v",err) }
+	if _,err:=store.DropFailed(ctx,"another-tenant",third[0].ID);!errors.Is(err,ErrNoFailedObservation) { t.Fatalf("cross-tenant drop must be hidden: %v",err) }
+	dropped,err:=store.DropFailed(ctx,tenant,third[0].ID);if err!=nil||dropped.TenantID!=tenant { t.Fatalf("explicit drop: %+v %v",dropped,err) }
+	if _,err:=store.DropFailed(ctx,tenant,third[0].ID);!errors.Is(err,ErrNoFailedObservation) { t.Fatalf("second drop: %v",err) }
 	if n,err:=store.Len(ctx);err!=nil||n!=0 { t.Fatalf("terminal drop len=%d err=%v",n,err) }
 	var queueItems int64
 	if err:=store.DB.QueryRowContext(ctx,"SELECT queue_items FROM genai_observation_queue_state WHERE singleton=true").Scan(&queueItems);err!=nil||queueItems!=0 {
