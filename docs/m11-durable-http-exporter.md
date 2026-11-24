@@ -21,6 +21,37 @@ Refs #65 / PR #66. This is a non-authoritative telemetry delivery path.
 - Remote receivers require HTTPS. Plain HTTP is accepted only for a literal loopback IP in tests. Redirects are not followed.
 - Configure a finite HTTP client timeout shorter than the worker lease. The worker lease must exceed the exporter timeout plus the receiver's bounded admission time.
 
+## Worker runtime
+
+`cmd/genai-observation-worker` runs the PostgreSQL-backed `DurableWorker` continuously. It uses only the existing Go standard library and pgx dependency; no new metrics or HTTP client dependency is added.
+
+Required environment:
+- `GENAI_OBSERVATION_DATABASE_URL`: PostgreSQL DSN. All replicas must use the same queue capacity.
+- `GENAI_OBSERVATION_RECEIVER_URL`: HTTPS receiver endpoint ending in `/v1/traces`.
+- `GENAI_OBSERVATION_RECEIVER_TOKEN`: bearer token (at least 32 printable characters).
+
+Optional bounded tuning:
+- `GENAI_OBSERVATION_QUEUE_CAPACITY`: default 10000; must match all writers.
+- `GENAI_OBSERVATION_WORKER_ID`: unique active lease owner; defaults to host + process ID.
+- `GENAI_OBSERVATION_POLL_INTERVAL`: default 1s, allowed range 100ms..1m.
+- `GENAI_OBSERVATION_LEASE`: default 30s; must exceed the HTTP timeout.
+- `GENAI_OBSERVATION_HTTP_TIMEOUT`: default 10s.
+- `GENAI_OBSERVATION_MAX_ATTEMPTS`, `GENAI_OBSERVATION_INITIAL_BACKOFF`, `GENAI_OBSERVATION_MAX_BACKOFF` and `GENAI_OBSERVATION_RETRY_JITTER`: bounded by `RetryPolicy` validation.
+- `GENAI_OBSERVATION_METRICS_ADDR`: default `127.0.0.1:9109`.
+
+The worker exposes `/healthz`, `/readyz` and `/metrics`. Metrics have fixed names and no tenant, model, trace, request or attempt labels: ACKs, retryable outcomes, terminal outcomes, operational errors, idle polls and queue length. The Compose overlay publishes metrics only on host loopback, runs as non-root, read-only, drops Linux capabilities and requires secrets through environment substitution. It is a conservative local deployment template, not a production HA/SLO claim.
+
+Start it with the base PostgreSQL Compose plus the worker overlay:
+
+```sh
+export GENAI_OBSERVATION_DATABASE_URL='postgres://telemetry:localdev-only@postgres:5432/telemetry?sslmode=disable'
+export GENAI_OBSERVATION_RECEIVER_URL='https://receiver.example/v1/traces'
+export GENAI_OBSERVATION_RECEIVER_TOKEN='replace-with-a-secret-of-at-least-32-characters'
+docker compose -f deployments/docker-compose.yml -f deployments/docker-compose-genai-observation-worker.yml up --build -d genai-observation-worker
+```
+
+Do not commit `.env` files or receiver credentials. The local PostgreSQL password above is only the existing developer Compose default.
+
 ## Migration and verification
 
 Apply `migrations/postgres/003_genai_observation_delivery_receipts.sql` before enabling keyed receiver admission on an existing database. Fresh disposable Compose databases apply it automatically from the migration mount.

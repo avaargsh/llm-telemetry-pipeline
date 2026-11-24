@@ -128,3 +128,11 @@ m9-pg-ha-sustained-smoke:
 
 m9-pg-ha-sustained-tests:
 	python3 -m unittest discover -s scripts -p 'test_m9_failover.py' -v
+
+.PHONY: genai-observation-worker
+
+# Durable non-authoritative GenAI observation delivery worker.
+# Requires GENAI_OBSERVATION_DATABASE_URL, GENAI_OBSERVATION_RECEIVER_URL and
+# GENAI_OBSERVATION_RECEIVER_TOKEN in the environment.
+genai-observation-worker:
+	go run ./cmd/genai-observation-worker

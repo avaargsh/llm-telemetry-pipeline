@@ -34,3 +34,4 @@ jobs:
         run: |
           docker build -f deployments/Dockerfile.lag-exporter -t telemetry-lag-exporter:ci .
           docker build -f deployments/Dockerfile.m6-scheduled -t telemetry-reconciler:ci .
+          docker build -f deployments/Dockerfile.genai-observation-worker -t genai-observation-worker:ci .
