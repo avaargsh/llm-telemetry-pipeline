@@ -14,6 +14,7 @@ import (
 
 const (
 	MaxDurableQueueCapacity = 1000000
+	MaxDurableReceiptCapacity = 2000000
 	durableCapacityAdvisoryLock int64 = 0x47454e41494f4253
 	durableReceiptRetention = 24 * time.Hour
 )
@@ -156,6 +157,11 @@ WHERE tenant_id=$1 AND trace_id=$2 AND span_id=$3 FOR SHARE`,o.TenantID,o.TraceI
 		return fmt.Errorf("count durable observations: %w",err)
 	}
 	if count>s.Capacity { return ErrDurableQueueFull }
+	var receipts int
+	if err=tx.QueryRowContext(ctx,"SELECT count(*) FROM genai_observation_receipts").Scan(&receipts);err!=nil {
+		return fmt.Errorf("count observation dedupe receipts: %w",err)
+	}
+	if receipts>MaxDurableReceiptCapacity { return ErrDurableQueueFull }
 	if err=tx.Commit();err!=nil { return fmt.Errorf("commit durable observation admission; retry same identities: %w",err) }
 	return nil
 }
@@ -302,4 +308,40 @@ func (s *DurableStore) Len(ctx context.Context)(int,error) {
 		return 0,fmt.Errorf("count durable observations: %w",err)
 	}
 	return n,nil
+}
+
+type TerminalDelivery struct {
+	ID int64
+	Observation Observation
+	Attempts int
+	Reason string
+	FailedAt time.Time
+}
+
+// ListTerminal returns operator-actionable failures for one tenant only.
+func (s *DurableStore) ListTerminal(ctx context.Context,tenant string,limit int)([]TerminalDelivery,error) {
+	if err:=s.requireDB();err!=nil { return nil,err }
+	if ctx==nil || !identifier(tenant,128) { return nil,errors.New("valid tenant and context required") }
+	if limit<1 || limit>100 { return nil,errors.New("terminal list limit must be 1..100") }
+	rows,err:=s.DB.QueryContext(ctx,`SELECT observation_id,schema_version,tenant_id,trace_id,span_id,
+request_id,attempt_id,provider,operation,request_model,response_model,status,input_tokens,output_tokens,
+attempts,terminal_reason,terminal_at
+FROM genai_observations WHERE tenant_id=$1 AND terminal_at IS NOT NULL
+ORDER BY terminal_at,observation_id LIMIT $2`,tenant,limit)
+	if err!=nil { return nil,fmt.Errorf("list terminal observations: %w",err) }
+	defer rows.Close()
+	out:=make([]TerminalDelivery,0,limit)
+	for rows.Next() {
+		var d TerminalDelivery
+		var input,output sql.NullInt64
+		if err:=rows.Scan(&d.ID,&d.Observation.SchemaVersion,&d.Observation.TenantID,&d.Observation.TraceID,&d.Observation.SpanID,
+			&d.Observation.RequestID,&d.Observation.AttemptID,&d.Observation.Provider,&d.Observation.Operation,
+			&d.Observation.RequestModel,&d.Observation.ResponseModel,&d.Observation.Status,&input,&output,
+			&d.Attempts,&d.Reason,&d.FailedAt);err!=nil { return nil,err }
+		if input.Valid { v:=input.Int64;d.Observation.InputTokens=&v }
+		if output.Valid { v:=output.Int64;d.Observation.OutputTokens=&v }
+		out=append(out,d)
+	}
+	if err:=rows.Err();err!=nil { return nil,err }
+	return out,nil
 }

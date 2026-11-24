@@ -84,6 +84,10 @@ func TestDurableStoreRetryTerminalAndExplicitOperatorActions(t *testing.T) {
 	if _,err:=db.ExecContext(ctx,"UPDATE genai_observations SET available_at=now()-interval '1 second' WHERE observation_id=$1",first[0].ID);err!=nil { t.Fatal(err) }
 	second,err:=store.Claim(ctx,"worker-b",time.Minute,1);if err!=nil||len(second)!=1||second[0].Attempts!=2 { t.Fatalf("retry claim=%+v err=%v",second,err) }
 	if err:=store.MarkTerminal(ctx,second[0],"worker-b","retry_exhausted");err!=nil { t.Fatal(err) }
+	terminal,err:=store.ListTerminal(ctx,tenant,10)
+	if err!=nil||len(terminal)!=1||terminal[0].ID!=second[0].ID||terminal[0].Reason!="retry_exhausted" {
+		t.Fatalf("terminal operator listing: %+v %v",terminal,err)
+	}
 	if next,err:=store.Claim(ctx,"worker-c",time.Minute,1);err!=nil||len(next)!=0 { t.Fatalf("terminal row auto-claimed: %d %v",len(next),err) }
 	if err:=store.RetryFailed(ctx,second[0].ID);err!=nil { t.Fatal(err) }
 	third,err:=store.Claim(ctx,"worker-c",time.Minute,1);if err!=nil||len(third)!=1||third[0].Attempts!=1 { t.Fatalf("manual retry did not reset: %+v %v",third,err) }
