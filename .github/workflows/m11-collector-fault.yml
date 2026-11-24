@@ -51,7 +51,7 @@ jobs:
           for i in $(seq 1 60); do
             if docker compose -f deployments/docker-compose.yml exec -T postgres \
               psql -U telemetry -d telemetry -tAc \
-              "SELECT to_regclass('public.usage_ledger') IS NOT NULL AND to_regclass('public.event_outbox') IS NOT NULL AND to_regclass('public.genai_observation_queue_state') IS NOT NULL" \
+              "SELECT to_regclass('public.usage_ledger') IS NOT NULL AND to_regclass('public.event_outbox') IS NOT NULL AND to_regclass('public.genai_observation_queue_state') IS NOT NULL AND to_regclass('public.genai_observation_delivery_receipts') IS NOT NULL" \
               | grep -q t; then
               exit 0
             fi

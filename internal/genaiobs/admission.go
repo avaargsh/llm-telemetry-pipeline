@@ -12,6 +12,12 @@ type ObservationAdmitter interface {
 	MaxBatchSize() int
 }
 
+// IdempotentObservationAdmitter persists a receiver-side delivery key in the
+// same transaction as admission. A key identifies exactly one observation.
+type IdempotentObservationAdmitter interface {
+	AdmitBatchWithIdempotencyKey(context.Context,Scope,string,[]Span,string) error
+}
+
 func (q *Queue) MaxBatchSize() int {
 	if q==nil { return 0 }
 	n:=len(q.slots)
@@ -46,4 +52,17 @@ func (s *DurableStore) AdmitBatch(ctx context.Context,scope Scope,version string
 		observations[i]=o
 	}
 	return s.EnqueueBatch(ctx,observations)
+}
+
+ 
+// AdmitBatchWithIdempotencyKey projects one observation under the authenticated
+// scope and persists the delivery key with the durable admission transaction.
+func (s *DurableStore) AdmitBatchWithIdempotencyKey(ctx context.Context,scope Scope,version string,spans []Span,key string) error {
+	if s==nil || len(spans)!=1 || len(spans)>s.MaxBatchSize() { return ErrInvalidBatchSize }
+	if !validIdempotencyKey(key) { return ErrInvalidIdempotencyKey }
+	if ctx==nil { return errors.New("context required") }
+	if err:=ctx.Err();err!=nil { return err }
+	o,err:=NormalizeInference(scope,version,spans[0])
+	if err!=nil { return err }
+	return s.EnqueueWithIdempotencyKey(ctx,o,key)
 }

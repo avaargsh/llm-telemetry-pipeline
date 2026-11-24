@@ -59,6 +59,7 @@ func DecodeOTLPJSON(body []byte) ([]Span, error) {
 					return nil, ErrOTLPJSONLimit
 				}
 				span := Span{TraceID: strings.ToLower(wire.TraceID), SpanID: strings.ToLower(wire.SpanID)}
+				seenRequestID,seenAttemptID:=false,false
 				switch wire.Status.Code {
 				case 0:
 					span.Status = "unset"
@@ -96,6 +97,22 @@ func DecodeOTLPJSON(body []byte) ([]Span, error) {
 							return nil, ErrInvalidOTLPJSON
 						}
 						value = v
+					case "llm_telemetry.request_id", "llm_telemetry.attempt_id":
+						raw := a.Value["stringValue"]
+						var v string
+						if len(a.Value)!=1 || len(raw)==0 || raw[0]!='"' || json.Unmarshal(raw,&v)!=nil {
+							return nil,ErrInvalidOTLPJSON
+						}
+						if a.Key=="llm_telemetry.request_id" {
+							if seenRequestID { return nil,ErrInvalidOTLPJSON }
+							seenRequestID=true
+							span.RequestID=v
+						} else {
+							if seenAttemptID { return nil,ErrInvalidOTLPJSON }
+							seenAttemptID=true
+							span.AttemptID=v
+						}
+						continue
 					default:
 						continue
 					}
