@@ -1,6 +1,10 @@
 """A/B profile evidence guard: recovery safety remains mandatory in both modes."""
 import importlib.util
 import pathlib
+import json
+import subprocess
+import sys
+import tempfile
 import unittest
 
 spec=importlib.util.spec_from_file_location(
@@ -135,6 +139,29 @@ class NetworkABContract(unittest.TestCase):
         self.assertEqual(result["result"],"FAILED_RUN_RECOVERY_UNVERIFIED")
         self.assertFalse(result["acknowledged_readback_verified"])
         self.assertEqual(result["kafka_report_result"],"PASS_EXPERIMENT_ONLY")
+
+
+    def test_failed_run_cli_writes_receipt_and_exits_nonzero(self):
+        same=nodes(["172.18.0.2","172.18.0.3","172.18.0.4"])
+        r=receipt()
+        r["result"]="INCOMPLETE"
+        with tempfile.TemporaryDirectory() as tmp:
+            root=pathlib.Path(tmp)
+            args=[sys.executable,str(pathlib.Path(evidence.__file__).resolve()),
+                  "--failed-run","--profile","dynamic","--head",HEAD]
+            for name,data in (("report",r),("audit",audit()),("sockets",sockets()),
+                              ("before",same),("after",same)):
+                p=root/(name+".json")
+                p.write_text(json.dumps(data),encoding="utf-8")
+                args.extend(["--"+name,str(p)])
+            out=root/"comparison.json"
+            completed=subprocess.run(args+["--out",str(out)],
+                                     capture_output=True,text=True,check=False)
+            self.assertEqual(completed.returncode,2,completed.stderr)
+            result=json.loads(out.read_text(encoding="utf-8"))
+            self.assertEqual(result["result"],"FAILED_RUN_RECOVERY_UNVERIFIED")
+            self.assertFalse(result["acknowledged_readback_verified"])
+            self.assertFalse(result["causal_root_cause_proven"])
 
     def test_unbound_head_and_malformed_mode_fail(self):
         for profile,head in (("dynamic","UNBOUND"),("fixed",HEAD),("random",HEAD)):
