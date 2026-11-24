@@ -269,6 +269,41 @@ A future Kafka 4.1.x comparison must retain the same fault sequence and all
 RF3/ISR3, no-ACK, identity, and 35/35 ACK-readback gates while changing only
 the digest-qualified Kafka image profile.
 
+## Controlled Kafka 4.1.0 vs 4.1.2 image-bundle comparison
+
+The pinned-IP network A/B workflow now runs three independent trials against
+both the existing Kafka 4.1.0 baseline and an isolated Kafka 4.1.2 candidate.
+The candidate Compose file is copied from the baseline and changes only the
+three digest-qualified broker image references. Static voter IDs, fixed lab
+IPv4 addresses, named volumes, heap, listeners, topic RF/minISR, the Go fault
+test, and the ACK/ISR recovery gates remain the same.
+
+| Profile | Image reference | Runtime evidence |
+|---|---|---|
+| Baseline | `apache/kafka:4.1.0@sha256:bff074a5d0051dbc0bbbcd25b045bb1fe84833ec0d3c7c965d1797dd289ec88f` | Observed live: Eclipse Adoptium OpenJDK 21.0.8+9-LTS |
+| Candidate | `apache/kafka:4.1.2@sha256:5cc2a2fd93fa2687b44015eee04fb2c3edd9e526bd64bf8bec5ff1e268772e0e` | Captured live from each broker; Docker Hub image metadata lists JDK 21.0.10+7 |
+
+The candidate digest is the official Docker Hub multi-platform index digest.
+See the [Kafka 4.1.2 Docker image metadata](https://hub.docker.com/layers/apache/kafka/4.1.2/images/sha256-d50ab7b5df612b3c303f9d8afe8fee59626a5de798addfd626fe1924e3205965).
+The CI identity gate records the actual JVM properties rather than assuming
+that Docker Hub metadata equals the runtime observed inside the container.
+
+This is an **image-bundle A/B**, not a Kafka-only comparison: the Kafka patch
+and its bundled JDK both change. A recovery difference cannot be attributed
+to Kafka code alone. The three-trial candidate profile does not replace the
+historical untreated dynamic-IP RED evidence, prove JVM DNS-cache causality,
+or establish production HA. A failed candidate trial remains a failed
+recovery observation; no ISR, ACK or evidence threshold is weakened.
+
+Manual candidate invocation:
+
+```bash
+M3B_NETWORK_AB_MODE=pinned \
+M3B_HA_COMPOSE_FILE=deployments/docker-compose-ha-4.1.2.yml \
+M3B_EXPECTED_KAFKA_IMAGE_REF=apache/kafka:4.1.2@sha256:5cc2a2fd93fa2687b44015eee04fb2c3edd9e526bd64bf8bec5ff1e268772e0e \
+bash scripts/m3b-kraft-parallel-smoke.sh
+```
+
 A bounded log tail can also miss older events. Therefore
 `NO_MISMATCH_OBSERVED` means only that **this measured window** showed no
 cross-target mismatch; it is not a root-cause exclusion or production HA
