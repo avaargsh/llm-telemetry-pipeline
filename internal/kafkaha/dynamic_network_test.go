@@ -94,7 +94,7 @@ func TestStoppedEndpointAttachment(t *testing.T) {
 
 func dynamicNetworkProfile(composeFile string) bool {
     switch filepath.Base(composeFile) {
-    case "docker-compose-ha-dynamic.yml", "docker-compose-ha-dns-ttl-zero.yml":
+    case "docker-compose-ha-dynamic.yml", "docker-compose-ha-dynamic-4.1.2.yml", "docker-compose-ha-dns-ttl-zero.yml":
         return true
     default:
         return false
@@ -304,6 +304,9 @@ func TestDynamicNetworkProfile(t *testing.T) {
     }
     if !dynamicNetworkProfile("deployments/docker-compose-ha-dns-ttl-zero.yml") {
         t.Fatal("TTL-zero profile not recognized")
+    }
+    if !dynamicNetworkProfile("deployments/docker-compose-ha-dynamic-4.1.2.yml") {
+        t.Fatal("Kafka 4.1.2 dynamic profile must force the same endpoint swap")
     }
     if dynamicNetworkProfile("deployments/docker-compose-ha.yml") {
         t.Fatal("pinned profile must not force endpoint churn")
