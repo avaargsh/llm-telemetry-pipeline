@@ -1,6 +1,5 @@
 # Deliberate disposable HA experiment; separate from developer single-broker Compose.
 # Three combined KRaft broker/controller nodes are for CI only.
-# KAFKA 4.1.2 comparison profile; only the digest-qualified Kafka image differs from the 4.1.0 baseline.
 # FIXED LAB-ONLY IPv4 prevents broker2/broker3 Docker IP swaps after
 # stop/start, which were observed in the historical voter-key fault envelope.
 # Never copy this RFC1918 subnet / plaintext setup into production.
