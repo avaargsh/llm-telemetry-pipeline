@@ -16,7 +16,7 @@ def node(num, ip):
     return {
         "expected_id": num,
         "container_ipv4": ip,
-        "image_ref": "apache/kafka:4.1.0@sha256:bff074a5d0051dbc0bbbcd25b045bb1fe84833ec0d3c7c965d1797dd289ec88f",
+        "image_ref": diagnostics.KAFKA_IMAGE_REF,
         "image_id": "sha256:" + "a" * 64,
         "meta": {
             "node.id": str(num),
