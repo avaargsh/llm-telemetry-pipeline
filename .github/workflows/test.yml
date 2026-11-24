@@ -35,3 +35,5 @@ jobs:
           docker build -f deployments/Dockerfile.lag-exporter -t telemetry-lag-exporter:ci .
           docker build -f deployments/Dockerfile.m6-scheduled -t telemetry-reconciler:ci .
           docker build -f deployments/Dockerfile.genai-observation-worker -t genai-observation-worker:ci .
+          docker build -f deployments/Dockerfile.genai-observation-receiver -t genai-observation-receiver:ci .
+          docker run --rm -v "$PWD:/work" -w /work ghcr.io/yannh/kubeconform:v0.6.7 -strict -summary deployments/k8s/genai-observation-receiver.yaml

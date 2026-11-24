@@ -7,7 +7,10 @@ on:
       - ".github/workflows/m11-collector-fault.yml"
       - "deployments/otel-collector-m11.yaml"
       - "deployments/Dockerfile.genai-observation-worker"
+      - "deployments/Dockerfile.genai-observation-receiver"
+      - "deployments/k8s/genai-observation-receiver.yaml"
       - "deployments/docker-compose-genai-observation-worker.yml"
+      - "cmd/genai-observation-receiver/**"
       - "cmd/genai-observation-worker/**"
       - "Makefile"
       - "docs/m11-durable-http-exporter.md"
@@ -21,7 +24,10 @@ on:
       - ".github/workflows/m11-collector-fault.yml"
       - "deployments/otel-collector-m11.yaml"
       - "deployments/Dockerfile.genai-observation-worker"
+      - "deployments/Dockerfile.genai-observation-receiver"
+      - "deployments/k8s/genai-observation-receiver.yaml"
       - "deployments/docker-compose-genai-observation-worker.yml"
+      - "cmd/genai-observation-receiver/**"
       - "cmd/genai-observation-worker/**"
       - "Makefile"
       - "docs/m11-durable-http-exporter.md"
@@ -70,7 +76,10 @@ jobs:
               "SELECT to_regclass('public.usage_ledger') IS NOT NULL AND to_regclass('public.event_outbox') IS NOT NULL AND to_regclass('public.genai_observation_queue_state') IS NOT NULL AND to_regclass('public.genai_observation_delivery_receipts') IS NOT NULL
                 AND EXISTS (SELECT 1 FROM information_schema.columns
                   WHERE table_name='genai_observation_queue_state'
-                    AND column_name='delivery_receipt_items')" \
+                    AND column_name='delivery_receipt_items')
+                AND to_regrole('llm_telemetry_observation_receiver') IS NOT NULL
+                AND to_regrole('llm_telemetry_observation_worker') IS NOT NULL
+                AND to_regprocedure('public.ensure_genai_observation_capacity(bigint)') IS NOT NULL" \
               | grep -q t; then
               exit 0
             fi
