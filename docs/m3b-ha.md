@@ -54,7 +54,10 @@ The dynamic profile intentionally preserves the historical failure when an
 actual two-voter address reassignment is followed by cross-target KRaft VOTE
 requests and ISR3 does not recover. The CI wrapper may classify only that
 fully evidenced signature as `EXPECTED_UNTREATED_FAILURE_REPRODUCED` so the
-evidence-collection workflow itself can complete. The receipt remains
+evidence-collection workflow itself can complete. Classification requires an actual
+post-quorum ISR3 wait deadline with last observed RF3/ISR1 or RF3/ISR2, and
+rejects receipts that show recovery or successful readback. An incomplete
+receipt alone cannot authorize expected-failure classification. The receipt remains
 `FAILED_ISR3_NOT_RESTORED`; this is **not** a Kafka recovery pass, mitigation,
 or root-cause proof. Any failure without the exact address-reassignment,
 cross-target VOTE, no-unsafe-ACK, and complete identity/socket evidence remains

@@ -96,7 +96,14 @@ func TestThreeBrokerParallelVoterRestart(t *testing.T) {
  report["quorum_high_watermark"]=q.HighWatermark
  quorumMS:=time.Since(restartStart).Milliseconds()
  t.Logf("quorum status observed after requested restart at %d ms",quorumMS)
- recovered:=haWaitPartition(t,ctx,3,-1)
+ recovered:=haWaitPartitionWithTimeoutObservation(t,ctx,3,-1,func(last kafka.Partition){
+    rf,isr:=len(last.Replicas),len(last.Isr)
+    if rf==3 && (isr==1 || isr==2) {
+       report["failure_reason"]="ISR3_RECOVERY_TIMEOUT"
+       report["last_observed_replication_factor"]=rf
+       report["last_observed_isr"]=isr
+    }
+ })
  if err:=RequireReplicaAndISR(recovered,3,3);err!=nil{t.Fatal(err)}
  isr3MS:=time.Since(restartStart).Milliseconds()
  report["recovered_replication_factor"]=len(recovered.Replicas)
