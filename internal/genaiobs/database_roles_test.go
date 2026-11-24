@@ -38,8 +38,14 @@ func TestObservationDatabaseRolesAreIsolatedFromBillingAuthority(t *testing.T) {
 			if canUpdateCapacity {
 				t.Fatalf("%s must not be able to change immutable queue capacity", role)
 			}
+			if _, err := tx.ExecContext(ctx, "SAVEPOINT capacity_denial"); err != nil {
+				t.Fatal(err)
+			}
 			if _, err := tx.ExecContext(ctx, "UPDATE public.genai_observation_queue_state SET capacity_limit = capacity_limit + 1 WHERE singleton = true"); err == nil || !strings.Contains(strings.ToLower(err.Error()), "permission denied") {
 				t.Fatalf("%s must be denied direct capacity mutation, got %v", role, err)
+			}
+			if _, err := tx.ExecContext(ctx, "ROLLBACK TO SAVEPOINT capacity_denial"); err != nil {
+				t.Fatalf("rollback denied-capacity probe: %v", err)
 			}
 			for _, table := range []string{"public.usage_ledger", "public.event_outbox"} {
 				for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
@@ -69,7 +75,7 @@ func TestObservationReceiverAndWorkerHaveDisjointDatabaseCapabilities(t *testing
 				"public.genai_observations": {"SELECT", "INSERT"},
 				"public.genai_observation_receipts": {"SELECT", "INSERT", "DELETE"},
 				"public.genai_observation_delivery_receipts": {"SELECT", "INSERT", "DELETE"},
-				"public.genai_observation_queue_state": {"SELECT", "UPDATE"},
+				"public.genai_observation_queue_state": {"SELECT"},
 			},
 			deny: map[string][]string{
 				"public.genai_observations": {"UPDATE", "DELETE"},
@@ -79,7 +85,7 @@ func TestObservationReceiverAndWorkerHaveDisjointDatabaseCapabilities(t *testing
 			role: "llm_telemetry_observation_worker",
 			allow: map[string][]string{
 				"public.genai_observations": {"SELECT", "UPDATE", "DELETE"},
-				"public.genai_observation_queue_state": {"SELECT", "UPDATE"},
+				"public.genai_observation_queue_state": {"SELECT"},
 			},
 			deny: map[string][]string{
 				"public.genai_observations": {"INSERT"},
@@ -97,6 +103,25 @@ func TestObservationReceiverAndWorkerHaveDisjointDatabaseCapabilities(t *testing
 			defer tx.Rollback()
 			if _, err := tx.ExecContext(ctx, "SET LOCAL ROLE "+tc.role); err != nil {
 				t.Fatal(err)
+			}
+			var queueItemsUpdate, receiptItemsUpdate, deliveryItemsUpdate, capacityUpdate bool
+			if err := tx.QueryRowContext(ctx, `SELECT
+has_column_privilege(current_user, 'public.genai_observation_queue_state', 'queue_items', 'UPDATE'),
+has_column_privilege(current_user, 'public.genai_observation_queue_state', 'receipt_items', 'UPDATE'),
+has_column_privilege(current_user, 'public.genai_observation_queue_state', 'delivery_receipt_items', 'UPDATE'),
+has_column_privilege(current_user, 'public.genai_observation_queue_state', 'capacity_limit', 'UPDATE')`).Scan(
+				&queueItemsUpdate, &receiptItemsUpdate, &deliveryItemsUpdate, &capacityUpdate); err != nil {
+				t.Fatal(err)
+			}
+			if capacityUpdate || !queueItemsUpdate {
+				t.Fatalf("%s has unexpected queue-state column privileges: queue=%v receipts=%v delivery=%v capacity=%v",
+					tc.role, queueItemsUpdate, receiptItemsUpdate, deliveryItemsUpdate, capacityUpdate)
+			}
+			if tc.role == "llm_telemetry_observation_receiver" && (!receiptItemsUpdate || !deliveryItemsUpdate) {
+				t.Fatalf("receiver lacks receipt counter update privileges: receipts=%v delivery=%v", receiptItemsUpdate, deliveryItemsUpdate)
+			}
+			if tc.role == "llm_telemetry_observation_worker" && (receiptItemsUpdate || deliveryItemsUpdate) {
+				t.Fatalf("worker has receipt counter update privileges: receipts=%v delivery=%v", receiptItemsUpdate, deliveryItemsUpdate)
 			}
 			for table, privileges := range tc.allow {
 				for _, privilege := range privileges {

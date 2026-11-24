@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -135,6 +137,10 @@ func (s *DurableStore) enqueueBatch(ctx context.Context,observations []Observati
 	}
 	var queueCount,receiptCount,deliveryReceiptCount,configuredCapacity int64
 	if err=tx.QueryRowContext(ctx,"SELECT public.ensure_genai_observation_capacity($1)",int64(s.Capacity)).Scan(&configuredCapacity);err!=nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err,&pgErr) && pgErr.Code=="22023" {
+			return ErrInvalidDurableConfig
+		}
 		return fmt.Errorf("configure immutable durable observation capacity: %w",err)
 	}
 	if err=tx.QueryRowContext(ctx,`SELECT queue_items,receipt_items,delivery_receipt_items,capacity_limit
