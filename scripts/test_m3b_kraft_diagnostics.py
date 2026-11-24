@@ -17,7 +17,13 @@ def node(num, ip):
         "expected_id": num,
         "container_ipv4": ip,
         "image_ref": diagnostics.KAFKA_IMAGE_REF,
+        "repo_digest": "apache/kafka@sha256:bff074a5d0051dbc0bbbcd25b045bb1fe84833ec0d3c7c965d1797dd289ec88f",
         "image_id": "sha256:" + "a" * 64,
+        "platform": "linux/amd64",
+        "kafka_version": "4.1.0",
+        "java_runtime_version": "21.0.8+9",
+        "java_vendor": "Eclipse Adoptium",
+        "java_vm_name": "OpenJDK 64-Bit Server VM",
         "meta": {
             "node.id": str(num),
             "cluster.id": "test-only-cluster",
@@ -116,6 +122,67 @@ PotentialSecret: never-print
             "CurrentVoters": "[1,2,3]",
         })
 
+
+
+    def test_runtime_java_properties_are_allowlisted(self):
+        raw = """java.runtime.version = 21.0.10+7
+java.vendor = Eclipse Adoptium
+java.vm.name = OpenJDK 64-Bit Server VM
+java.home = /private/runtime/path
+user.name = runner
+"""
+        self.assertEqual(diagnostics.parse_java_identity(raw), {
+            "java_runtime_version": "21.0.10+7",
+            "java_vendor": "Eclipse Adoptium",
+            "java_vm_name": "OpenJDK 64-Bit Server VM",
+        })
+
+    def test_container_runtime_identity_reads_kafka_and_jdk_versions(self):
+        java = """    java.runtime.version = 21.0.10+7
+    java.vendor = Eclipse Adoptium
+    java.vm.name = OpenJDK 64-Bit Server VM
+"""
+        with patch.object(diagnostics, "command", side_effect=[
+            ("4.1.2\\n", ""), (java, "")
+        ]) as run:
+            identity, error = diagnostics.container_runtime_identity("broker1")
+        self.assertEqual(error, "")
+        self.assertEqual(identity, {
+            "kafka_version": "4.1.2",
+            "java_runtime_version": "21.0.10+7",
+            "java_vendor": "Eclipse Adoptium",
+            "java_vm_name": "OpenJDK 64-Bit Server VM",
+        })
+        self.assertEqual(run.call_count, 2)
+
+    def test_configured_image_reference_can_select_later_pinned_patch(self):
+        candidate = "apache/kafka:4.1.2@sha256:5cc2a2fd93fa2687b44015eee04fb2c3edd9e526bd64bf8bec5ff1e268772e0e"
+        with patch.dict(os.environ, {"M3B_KAFKA_IMAGE": candidate}):
+            self.assertEqual(diagnostics.expected_image_ref(), candidate)
+
+    def test_runtime_kafka_version_must_match_pinned_image_tag(self):
+        nodes = {f"broker{i}": node(i, f"172.22.0.{i+10}") for i in (1, 2, 3)}
+        nodes["broker2"]["kafka_version"] = "4.1.2"
+        findings = diagnostics.assess(nodes)
+        self.assertIn("broker2: Kafka runtime version does not match pinned image tag", findings)
+
+    def test_missing_jdk_identity_fails_closed(self):
+        nodes = {f"broker{i}": node(i, f"172.22.0.{i+10}") for i in (1, 2, 3)}
+        nodes["broker1"].pop("java_runtime_version")
+        findings = diagnostics.assess(nodes)
+        self.assertIn("broker1: incomplete Java runtime identity", findings)
+
+    def test_jdk_identity_must_match_across_brokers(self):
+        nodes = {f"broker{i}": node(i, f"172.22.0.{i+10}") for i in (1, 2, 3)}
+        nodes["broker3"]["java_runtime_version"] = "21.0.10+7"
+        findings = diagnostics.assess(nodes)
+        self.assertIn("Java runtime identity differs across brokers", findings)
+
+    def test_requested_digest_must_match_actual_repo_digest(self):
+        nodes = {f"broker{i}": node(i, f"172.22.0.{i+10}") for i in (1, 2, 3)}
+        nodes["broker2"]["repo_digest"] = "apache/kafka@sha256:" + "c" * 64
+        findings = diagnostics.assess(nodes)
+        self.assertIn("broker2: actual repo digest differs from requested image digest", findings)
 
 if __name__ == "__main__":
     unittest.main()
