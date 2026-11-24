@@ -212,9 +212,20 @@ func haReassignDynamicBrokerEndpoints(t *testing.T, ctx context.Context, endpoin
     for i, endpoint := range endpoints {
         name := fmt.Sprintf("m3b-ip-hold-%s-%d", endpoint.service, time.Now().UnixNano()+int64(i))
         reservationNames = append(reservationNames, name)
-        haDocker(t, ctx, "run", "-d", "--rm", "--name", name,
+        runArgs := []string{"run", "-d", "--rm", "--name", name,
             "--network", network, "--ip", endpoint.ipv4,
-            "busybox:1.36", "sleep", "600")
+            "busybox:1.36", "sleep", "600"}
+        if _, reserveErr := haDockerCommand(ctx, runArgs...); reserveErr != nil {
+            // Some Docker engines retain a stopped container's endpoint until
+            // an explicit disconnect. Retry only after forcing that endpoint
+            // away; if another container owns the IP, the second reservation
+            // still fails and the experiment remains red.
+            _, disconnectErr := haDockerCommand(ctx, "network", "disconnect", "-f", network, endpoint.containerID)
+            if _, retryErr := haDockerCommand(ctx, runArgs...); retryErr != nil {
+                t.Fatalf("reserve old IPv4 %s for %s: initial=%v disconnect=%v retry=%v",
+                    endpoint.ipv4, endpoint.service, reserveErr, disconnectErr, retryErr)
+            }
+        }
     }
 
     // Reattach the same stopped broker containers, preserving service DNS
