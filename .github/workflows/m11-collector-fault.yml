@@ -87,6 +87,12 @@ jobs:
           done
           docker compose -f deployments/docker-compose.yml logs postgres
           exit 1
+      - name: Create independent receiver database and apply the real migrations
+        run: |
+          docker compose -f deployments/docker-compose.yml exec -T postgres createdb -U telemetry receiver_telemetry
+          for migration in migrations/postgres/*.sql; do
+            docker compose -f deployments/docker-compose.yml exec -T postgres psql -v ON_ERROR_STOP=1 -U telemetry -d receiver_telemetry < "$migration"
+          done
       - name: Start pinned OpenTelemetry Collector contrib
         run: |
           docker run --detach --name m11-otel-collector --network host \
@@ -118,6 +124,30 @@ jobs:
         env:
           TEST_POSTGRES_DSN: postgres://telemetry:localdev-only@localhost:15432/telemetry?sslmode=disable
         run: go test -race -count=1 -v -run '^TestM11DurableHTTPExporterReceiverPersistsKeyAcrossAckLoss$' ./internal/ledger
+      - name: Sender and receiver independent PostgreSQL database ACK-loss recovery
+        env:
+          TEST_POSTGRES_DSN: postgres://telemetry:localdev-only@localhost:15432/telemetry?sslmode=disable
+          TEST_RECEIVER_POSTGRES_DSN: postgres://telemetry:localdev-only@localhost:15432/receiver_telemetry?sslmode=disable
+        run: go test -race -count=1 -v -run '^TestM11DurableHTTPExporterReceiverUsesIndependentDatabases
+        if: always()
+        run: |
+          mkdir -p artifacts/m11-collector-fault
+          docker logs m11-otel-collector > artifacts/m11-collector-fault/collector.log 2>&1 || true
+          docker compose -f deployments/docker-compose.yml logs postgres > artifacts/m11-collector-fault/postgres.log 2>&1 || true
+      - name: Archive exact-HEAD fault-injection evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m11-real-collector-fault-injection-evidence
+          path: artifacts/m11-collector-fault/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Stop isolated Collector and PostgreSQL environment
+        if: always()
+        run: |
+          docker rm -f m11-otel-collector || true
+          docker compose -f deployments/docker-compose.yml down -v
+ ./internal/ledger
       - name: Collect Collector and PostgreSQL logs
         if: always()
         run: |

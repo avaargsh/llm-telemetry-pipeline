@@ -133,9 +133,12 @@ docker build -f deployments/Dockerfile.genai-observation-worker .
 ```
 
 PostgreSQL integration tests run with `TEST_POSTGRES_DSN` and verify database
-role grants, queue statistics, idempotency, and recovery. The migration is
-automatically applied by the repository's disposable Compose PostgreSQL
-environment on a fresh volume. Existing databases must apply migrations 003
-and 004 explicitly before deploying new binaries.
+role grants, queue statistics, idempotency, and recovery. The M11.7 fault
+workflow also creates a second disposable PostgreSQL database, applies the
+same migrations, assumes the receiver capability role, and proves sender
+lease recovery and receiver deduplication across independent databases.
+The migration is automatically applied by the repository's disposable Compose
+PostgreSQL environment on a fresh volume. Existing databases must apply
+migrations 003 and 004 explicitly before deploying new binaries.
 
 No production availability, latency SLO, RPO or RTO is claimed by these tests.
