@@ -1,7 +1,8 @@
-FROM golang:1.23.12-alpine AS build
+FROM golang:1.27.4-alpine AS build
+ENV GOTOOLCHAIN=local
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN go mod download
+RUN test "$(go env GOVERSION)" = go1.27.4 && go mod download
 COPY cmd/lag-exporter ./cmd/lag-exporter
 COPY internal/lagmonitor ./internal/lagmonitor
 COPY internal/lagrisk ./internal/lagrisk
