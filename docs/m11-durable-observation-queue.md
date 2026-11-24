@@ -26,3 +26,14 @@ Refs #56. Migration 002 adds two tables that are deliberately independent of usa
 - The database itself is the durability boundary. PostgreSQL outage fails admission closed.
 - Only normalized fields and token counts are stored. Error fields persist stable reason codes, never exporter error text.
 - No production delivery SLO is claimed. Backups, retention, database role grants, and operational alerting must be configured by deployment owners.
+
+
+## M11.8: atomic receipt expiry and capacity accounting
+
+Migration 005 replaces the existing expiry function without changing its signature or returned deletion counts. The function first locks the singleton queue-state row, deletes expired natural and delivery receipts, and decrements both persisted counters in the same PostgreSQL transaction. Direct calls by the restricted Receiver role therefore preserve the invariant that counters equal retained rows.
+
+Counter underflow is a hard error (23514). Because the deletes and counter update are in one statement transaction, an underflow aborts and rolls back both deletes. Migration 005 does not silently reconcile pre-existing drift; operators must inspect row counts and counters and perform any repair as a separately reviewed maintenance action.
+
+Compatibility: the existing Go enqueue writer locks the same singleton row before calling the function, consumes the returned delete counts, and writes absolute post-expiry counter totals from its pre-expiry snapshot. That final absolute update converges to the same values after Migration 005; it does not subtract twice. A regression test covers this behavior along with direct restricted-role calls, rollback, repeated expiry, underflow, and concurrent expiry/admission.
+
+Fresh PostgreSQL databases load migrations in filename order from migrations/postgres. Existing databases must explicitly apply 005_genai_observation_receipt_expiry_atomic.sql once through the deployment's approved migration process; mounting the directory into docker-entrypoint-initdb.d does not upgrade an already initialized volume. CI exercises both the normal Compose initialization path and the independent receiver database migration loop. This is migration validation, not a claim of production rollout.
