@@ -55,5 +55,7 @@ if __name__=="__main__":
     except (ValueError,OSError,TypeError,AttributeError) as exc:
         p.exit(2,f"TTL experiment rejected: {exc}\n")
     print(result)
+    if result=="UNEXPOSED_INCONCLUSIVE":
+        p.exit(3,"UNEXPOSED_INCONCLUSIVE: no mitigation sample counted\\n")
     if result!="EXPOSED_RECOVERY_VERIFIED":
         p.exit(2,"No qualifying address reassignment; no mitigation proof\n")

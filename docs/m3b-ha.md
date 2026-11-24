@@ -48,6 +48,22 @@ The integration test uses actual partition metadata to verify replica count, ISR
 All **nine** required GitHub Actions workflows passed on PR head `b6ed95d`, including the 100,000-event Kafka→ClickHouse regression. The [final three-broker HA run](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43893131251) uploaded `m3b-kafka-ha-report`; squash-merged as `8651745`.
 
 
+## Expected untreated dynamic-IP failure classification
+
+The dynamic profile may complete the evidence-collection job only when the
+known failure signature is fully reproduced: two-voter address reassignment,
+cross-target VOTE mismatch, no unsafe ACK, unchanged persisted identities,
+and complete socket evidence. The receipt remains
+`FAILED_ISR3_NOT_RESTORED`; this is not a Kafka recovery pass or root-cause proof.
+
+## DNS TTL treatment evidence threshold
+
+An individual TTL trial with no actual address reassignment is classified
+`UNEXPOSED_INCONCLUSIVE` and is not counted as a successful treatment sample.
+The aggregate gate requires at least two of three independent trials to show
+real two-voter reassignment, 35/35 ACK readback, ISR recovery, and zero
+cross-target VOTE requests. Unexposed trials never count toward the threshold.
+
 ## Investigation: intermittent post-quorum-loss voter mismatch (Issue #28)
 
 The historic successes above are real but do **not** imply every subsequent
