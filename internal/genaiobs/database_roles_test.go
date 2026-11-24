@@ -30,6 +30,17 @@ func TestObservationDatabaseRolesAreIsolatedFromBillingAuthority(t *testing.T) {
 			if _, err := tx.ExecContext(ctx, "SET LOCAL ROLE "+role); err != nil {
 				t.Fatalf("role migration missing or role cannot be assumed: %v", err)
 			}
+			var canUpdateCapacity bool
+			if err := tx.QueryRowContext(ctx,
+				"SELECT has_column_privilege(current_user, 'public.genai_observation_queue_state', 'capacity_limit', 'UPDATE')").Scan(&canUpdateCapacity); err != nil {
+				t.Fatal(err)
+			}
+			if canUpdateCapacity {
+				t.Fatalf("%s must not be able to change immutable queue capacity", role)
+			}
+			if _, err := tx.ExecContext(ctx, "UPDATE public.genai_observation_queue_state SET capacity_limit = capacity_limit + 1 WHERE singleton = true"); err == nil || !strings.Contains(strings.ToLower(err.Error()), "permission denied") {
+				t.Fatalf("%s must be denied direct capacity mutation, got %v", role, err)
+			}
 			for _, table := range []string{"public.usage_ledger", "public.event_outbox"} {
 				for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE"} {
 					if roleHasTablePrivilege(t, tx, table, privilege) {
