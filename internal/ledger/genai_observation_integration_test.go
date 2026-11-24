@@ -30,29 +30,25 @@ func (e *genAIWorkerTestExporter) Export(_ context.Context,o genaiobs.Observatio
 
 // Compare full authoritative rows, not just counts: a changed token total,
 // digest, event identity or outbox payload must also fail this assertion.
-// Restrict the snapshot to the two isolated test tenants so other packages'
+// Restrict the snapshot to the exact seeded event IDs so other packages'
 // integration fixtures cannot make this test flaky.
-func genAIUsageSnapshot(t *testing.T, ctx context.Context, db *sql.DB, tenantA, tenantB string) string {
+func genAIUsageSnapshot(t *testing.T, ctx context.Context, db *sql.DB, eventIDA, eventIDB string) string {
 	t.Helper()
 	const q = `
 SELECT jsonb_build_object(
   'ledger', COALESCE((
     SELECT jsonb_agg(to_jsonb(l) ORDER BY l.event_id)
     FROM usage_ledger l
-    WHERE l.tenant_id IN ($1, $2)
+    WHERE l.event_id IN ($1::uuid, $2::uuid)
   ), '[]'::jsonb),
   'outbox', COALESCE((
     SELECT jsonb_agg(to_jsonb(o) ORDER BY o.event_id)
     FROM event_outbox o
-    WHERE o.event_payload->>'tenant_id' IN ($1, $2)
-       OR o.event_id IN (
-         SELECT event_id FROM usage_ledger
-         WHERE tenant_id IN ($1, $2)
-       )
+    WHERE o.event_id IN ($1::uuid, $2::uuid)
   ), '[]'::jsonb)
 )::text`
 	var snapshot string
-	if err := db.QueryRowContext(ctx, q, tenantA, tenantB).Scan(&snapshot); err != nil {
+	if err := db.QueryRowContext(ctx, q, eventIDA, eventIDB).Scan(&snapshot); err != nil {
 		t.Fatal(err)
 	}
 	return snapshot
@@ -90,11 +86,11 @@ func TestGenAIObservationsDoNotChangeLedger(t *testing.T) {
 			t.Fatalf("seed missing: ledger=%d outbox=%d", l, o)
 		}
 	}
-	before := genAIUsageSnapshot(t, ctx, db, tenantA, tenantB)
+	before := genAIUsageSnapshot(t, ctx, db, first.EventID, second.EventID)
 	unchanged := func(t *testing.T) {
 		t.Helper()
-		if got := genAIUsageSnapshot(t, ctx, db, tenantA, tenantB); got != before {
-			t.Fatal("GenAI observation changed authoritative ledger/outbox rows")
+		if got := genAIUsageSnapshot(t, ctx, db, first.EventID, second.EventID); got != before {
+			t.Fatalf("GenAI observation changed authoritative ledger/outbox rows: before=%s after=%s", before, got)
 		}
 	}
 	base := genaiobs.Span{
