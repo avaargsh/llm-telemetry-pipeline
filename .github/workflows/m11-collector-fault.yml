@@ -125,7 +125,7 @@ jobs:
       - name: Durable receiver idempotency receipt semantics
         env:
           TEST_POSTGRES_DSN: postgres://telemetry:localdev-only@localhost:15432/telemetry?sslmode=disable
-        run: go test -race -count=1 -v -run '^TestDurableStore(IdempotencyKeyReceiptSemantics|RejectsInvalidIdempotencyKeys)$' ./internal/genaiobs
+        run: go test -race -count=1 -v -run '^TestDurableStore(IdempotencyKeyReceiptSemantics|DeliveryReceiptTenantIsolationExpiryAndCapacity|RejectsInvalidIdempotencyKeys)$' ./internal/genaiobs
       - name: Durable HTTP exporter → receiver ACK-loss and worker-replacement test
         env:
           TEST_POSTGRES_DSN: postgres://telemetry:localdev-only@localhost:15432/telemetry?sslmode=disable

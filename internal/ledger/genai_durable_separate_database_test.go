@@ -19,6 +19,7 @@ import (
 )
 
 const m11SeparateDatabaseToken = "m11-separate-database-test-token-01234567890123456789"
+const m11SeparateDatabaseTokenB = "m11-separate-database-tenant-b-token-0123456789"
 
 func openM11ReceiverRoleDB(t *testing.T, dsn string) *sql.DB {
 	t.Helper()
@@ -96,6 +97,7 @@ func TestM11DurableHTTPExporterReceiverUsesIndependentDatabases(t *testing.T) {
 
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	tenant := "ledger-m11-7-separated-" + suffix
+	tenantB := tenant + "-other"
 	senderStore, err := genaiobs.NewDurableStore(senderDB, 8)
 	if err != nil {
 		t.Fatal(err)
@@ -111,17 +113,17 @@ func TestM11DurableHTTPExporterReceiverUsesIndependentDatabases(t *testing.T) {
 	t.Cleanup(func() {
 		// Clean each disposable database with its own administrative test
 		// connection; the receiver's runtime pool remains least-privileged.
-		_, _ = senderDB.Exec("DELETE FROM public.genai_observations WHERE tenant_id=$1", tenant)
-		_, _ = senderDB.Exec("DELETE FROM public.genai_observation_receipts WHERE tenant_id=$1", tenant)
-		_, _ = senderDB.Exec("DELETE FROM public.genai_observation_delivery_receipts WHERE tenant_id=$1", tenant)
+		_, _ = senderDB.Exec("DELETE FROM public.genai_observations WHERE tenant_id IN ($1,$2)", tenant, tenantB)
+		_, _ = senderDB.Exec("DELETE FROM public.genai_observation_receipts WHERE tenant_id IN ($1,$2)", tenant, tenantB)
+		_, _ = senderDB.Exec("DELETE FROM public.genai_observation_delivery_receipts WHERE tenant_id IN ($1,$2)", tenant, tenantB)
 		_, _ = senderDB.Exec(`UPDATE public.genai_observation_queue_state
 SET queue_items=(SELECT count(*) FROM public.genai_observations),
     receipt_items=(SELECT count(*) FROM public.genai_observation_receipts),
     delivery_receipt_items=(SELECT count(*) FROM public.genai_observation_delivery_receipts),
     capacity_limit=0 WHERE singleton=true`)
-		_, _ = receiverAdminDB.Exec("DELETE FROM public.genai_observations WHERE tenant_id=$1", tenant)
-		_, _ = receiverAdminDB.Exec("DELETE FROM public.genai_observation_receipts WHERE tenant_id=$1", tenant)
-		_, _ = receiverAdminDB.Exec("DELETE FROM public.genai_observation_delivery_receipts WHERE tenant_id=$1", tenant)
+		_, _ = receiverAdminDB.Exec("DELETE FROM public.genai_observations WHERE tenant_id IN ($1,$2)", tenant, tenantB)
+		_, _ = receiverAdminDB.Exec("DELETE FROM public.genai_observation_receipts WHERE tenant_id IN ($1,$2)", tenant, tenantB)
+		_, _ = receiverAdminDB.Exec("DELETE FROM public.genai_observation_delivery_receipts WHERE tenant_id IN ($1,$2)", tenant, tenantB)
 		_, _ = receiverAdminDB.Exec(`UPDATE public.genai_observation_queue_state
 SET queue_items=(SELECT count(*) FROM public.genai_observations),
     receipt_items=(SELECT count(*) FROM public.genai_observation_receipts),
@@ -152,12 +154,17 @@ SET queue_items=(SELECT count(*) FROM public.genai_observations),
 
 	handler, err := genaiobs.NewDurableOTLPHTTPHandler(
 		receiverStore,
-		[]genaiobs.OTLPCredential{{Token: m11SeparateDatabaseToken, TenantID: tenant}},
+		[]genaiobs.OTLPCredential{{Token: m11SeparateDatabaseToken, TenantID: tenant}, {Token: m11SeparateDatabaseTokenB, TenantID: tenantB}},
 		4,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
+	observationB := observation
+	observationB.TenantID = tenantB
+	observationB.TraceID = "b123456789abcdef0123456789abcdef"
+	var handlerMu sync.RWMutex
+	var activeHandler http.Handler = handler
 	var attempts atomic.Int64
 	var mu sync.Mutex
 	var keys []string
@@ -168,7 +175,10 @@ SET queue_items=(SELECT count(*) FROM public.genai_observations),
 		mu.Unlock()
 
 		recorded := httptest.NewRecorder()
-		handler.ServeHTTP(recorded, r)
+		handlerMu.RLock()
+		currentHandler := activeHandler
+		handlerMu.RUnlock()
+		currentHandler.ServeHTTP(recorded, r)
 		if attempt == 1 && recorded.Code == http.StatusOK {
 			hijacker, ok := w.(http.Hijacker)
 			if !ok {
@@ -227,6 +237,40 @@ SET queue_items=(SELECT count(*) FROM public.genai_observations),
 	if receiverReceipts != 1 || receiverRows != 1 {
 		t.Fatalf("receiver commit was not durable: receipts=%d observations=%d", receiverReceipts, receiverRows)
 	}
+
+	// Replace the receiver's database pool and HTTP handler after the commit
+	// but before the sender can observe an ACK. The next retry must deduplicate
+	// from persisted receipts rather than process memory.
+	if err := receiverDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	receiverDB = openM11ReceiverRoleDB(t, receiverDSN)
+	restartedReceiverStore, err := genaiobs.NewDurableStore(receiverDB, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restartedHandler, err := genaiobs.NewDurableOTLPHTTPHandler(
+		restartedReceiverStore,
+		[]genaiobs.OTLPCredential{{Token: m11SeparateDatabaseToken, TenantID: tenant}, {Token: m11SeparateDatabaseTokenB, TenantID: tenantB}},
+		4,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handlerMu.Lock()
+	activeHandler = restartedHandler
+	handlerMu.Unlock()
+
+	exporterB, err := genaiobs.NewHTTPDurableExporter(
+		proxy.URL+"/v1/traces", m11SeparateDatabaseTokenB, proxy.Client(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := exporterB.Export(ctx, genaiobs.Delivery{ID: observationID, Observation: observationB}); err != nil {
+		t.Fatalf("same delivery key under another authenticated tenant must be independent: %v", err)
+	}
+
 	var senderReceipts, senderRows int
 	if err := senderDB.QueryRowContext(ctx,
 		"SELECT count(*) FROM public.genai_observation_delivery_receipts WHERE tenant_id=$1 AND idempotency_key=$2",
@@ -268,8 +312,8 @@ SET queue_items=(SELECT count(*) FROM public.genai_observations),
 	mu.Lock()
 	gotKeys := append([]string(nil), keys...)
 	mu.Unlock()
-	if len(gotKeys) != 3 || gotKeys[0] != expectedKey || gotKeys[1] != expectedKey || gotKeys[2] != expectedKey {
-		t.Fatalf("idempotency key changed across restart/replay: %#v want %q", gotKeys, expectedKey)
+	if len(gotKeys) != 4 || gotKeys[0] != expectedKey || gotKeys[1] != expectedKey || gotKeys[2] != expectedKey || gotKeys[3] != expectedKey {
+		t.Fatalf("idempotency key changed across receiver restart, retry and tenant replay: %#v want %q", gotKeys, expectedKey)
 	}
 	if err := senderDB.QueryRowContext(ctx,
 		"SELECT count(*) FROM public.genai_observations WHERE tenant_id=$1",
@@ -277,11 +321,21 @@ SET queue_items=(SELECT count(*) FROM public.genai_observations),
 		t.Fatal(err)
 	}
 	if err := receiverDB.QueryRowContext(ctx,
-		"SELECT count(*) FROM public.genai_observations WHERE tenant_id=$1",
-		tenant).Scan(&receiverRows); err != nil {
+		"SELECT count(*) FROM public.genai_observations WHERE tenant_id IN ($1,$2)",
+		tenant, tenantB).Scan(&receiverRows); err != nil {
 		t.Fatal(err)
 	}
-	if senderRows != 0 || receiverRows != 1 {
-		t.Fatalf("unexpected final database ownership: sender rows=%d receiver rows=%d", senderRows, receiverRows)
+	var tenantBRows, scopedReceipts int
+	if err := receiverDB.QueryRowContext(ctx,
+		"SELECT count(*) FROM public.genai_observations WHERE tenant_id=$1", tenantB).Scan(&tenantBRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := receiverDB.QueryRowContext(ctx,
+		"SELECT count(*) FROM public.genai_observation_delivery_receipts WHERE idempotency_key=$1 AND tenant_id IN ($2,$3)",
+		expectedKey, tenant, tenantB).Scan(&scopedReceipts); err != nil {
+		t.Fatal(err)
+	}
+	if senderRows != 0 || receiverRows != 2 || tenantBRows != 1 || scopedReceipts != 2 {
+		t.Fatalf("unexpected final database ownership or tenant-scoped receipts: sender rows=%d receiver rows=%d tenant B rows=%d receipts=%d", senderRows, receiverRows, tenantBRows, scopedReceipts)
 	}
 }
