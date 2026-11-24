@@ -415,8 +415,9 @@ type DurableStats struct {
 	OldestPendingAgeSeconds float64
 }
 
-// Stats returns a bounded, tenant-agnostic queue snapshot. It intentionally
-// exposes no tenant, trace, request, model or credential dimensions.
+// Stats returns a bounded, tenant-agnostic queue snapshot. Terminal depth is
+// read from its partial index, oldest pending age from a dedicated partial
+// index, and pending depth is derived from the transactional queue counter.
 func (s *DurableStore) Stats(ctx context.Context) (DurableStats, error) {
 	if err := s.requireDB(); err != nil {
 		return DurableStats{}, err
@@ -424,27 +425,31 @@ func (s *DurableStore) Stats(ctx context.Context) (DurableStats, error) {
 	if ctx == nil {
 		return DurableStats{}, errors.New("context required")
 	}
-	var total, capacity, pending, terminal int64
+	var total, capacity, terminal int64
 	var oldestAge float64
 	err := s.DB.QueryRowContext(ctx, `SELECT
 	q.queue_items,
 	q.capacity_limit,
-	COUNT(o.observation_id) FILTER (WHERE o.terminal_at IS NULL),
-	COUNT(o.observation_id) FILTER (WHERE o.terminal_at IS NOT NULL),
-	COALESCE(EXTRACT(EPOCH FROM (now() - MIN(o.created_at) FILTER (WHERE o.terminal_at IS NULL))), 0)
+	(SELECT count(*) FROM public.genai_observations WHERE terminal_at IS NOT NULL),
+	COALESCE((
+		SELECT EXTRACT(EPOCH FROM (now() - created_at))
+		FROM public.genai_observations
+		WHERE terminal_at IS NULL
+		ORDER BY created_at, observation_id
+		LIMIT 1
+	), 0)
 FROM public.genai_observation_queue_state AS q
-LEFT JOIN public.genai_observations AS o ON TRUE
-WHERE q.singleton = TRUE
-GROUP BY q.queue_items, q.capacity_limit`).Scan(&total, &capacity, &pending, &terminal, &oldestAge)
+WHERE q.singleton = TRUE`).Scan(&total, &capacity, &terminal, &oldestAge)
 	if err != nil {
 		return DurableStats{}, fmt.Errorf("read durable observation queue stats: %w", err)
 	}
-	if total < 0 || capacity < 0 || pending < 0 || terminal < 0 || total != pending+terminal {
+	if total < 0 || capacity < 0 || terminal < 0 || terminal > total {
 		return DurableStats{}, errors.New("durable observation queue counters are inconsistent")
 	}
 	if oldestAge < 0 {
 		oldestAge = 0
 	}
+	pending := total - terminal
 	return DurableStats{
 		Total: int(total), Pending: int(pending), Terminal: int(terminal),
 		Capacity: int(capacity), OldestPendingAgeSeconds: oldestAge,

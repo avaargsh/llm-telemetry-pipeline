@@ -3,14 +3,14 @@
 DO $roles$
 BEGIN
 	IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'llm_telemetry_observation_receiver') THEN
-		CREATE ROLE llm_telemetry_observation_receiver NOLOGIN;
+		CREATE ROLE llm_telemetry_observation_receiver NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
 	ELSE
-		ALTER ROLE llm_telemetry_observation_receiver NOLOGIN;
+		ALTER ROLE llm_telemetry_observation_receiver NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
 	END IF;
 	IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = 'llm_telemetry_observation_worker') THEN
-		CREATE ROLE llm_telemetry_observation_worker NOLOGIN;
+		CREATE ROLE llm_telemetry_observation_worker NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
 	ELSE
-		ALTER ROLE llm_telemetry_observation_worker NOLOGIN;
+		ALTER ROLE llm_telemetry_observation_worker NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS NOINHERIT;
 	END IF;
 END
 $roles$;
@@ -68,9 +68,16 @@ GRANT UPDATE (queue_items, receipt_items, delivery_receipt_items)
 GRANT EXECUTE ON FUNCTION public.ensure_genai_observation_capacity(BIGINT)
 	TO llm_telemetry_observation_receiver;
 
-GRANT SELECT, UPDATE, DELETE ON TABLE public.genai_observations TO llm_telemetry_observation_worker;
+GRANT SELECT, DELETE ON TABLE public.genai_observations TO llm_telemetry_observation_worker;
+GRANT UPDATE (attempts, available_at, lease_owner, lease_until, last_error, terminal_at, terminal_reason)
+    ON TABLE public.genai_observations TO llm_telemetry_observation_worker;
 GRANT SELECT ON TABLE public.genai_observation_queue_state TO llm_telemetry_observation_worker;
 GRANT UPDATE (queue_items) ON TABLE public.genai_observation_queue_state TO llm_telemetry_observation_worker;
 
 REVOKE ALL ON TABLE public.usage_ledger, public.event_outbox
 	FROM llm_telemetry_observation_receiver, llm_telemetry_observation_worker;
+
+-- Supports oldest-pending-age sampling without scanning the entire queue.
+CREATE INDEX IF NOT EXISTS idx_genai_observations_oldest_pending
+    ON public.genai_observations (created_at, observation_id)
+    WHERE terminal_at IS NULL;

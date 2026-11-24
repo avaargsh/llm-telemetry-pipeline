@@ -60,7 +60,7 @@ func loadCredentials(path string) ([]genaiobs.OTLPCredential, error) {
 	}
 	defer file.Close()
 	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o027 != 0 {
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o037 != 0 {
 		return nil, errors.New("credentials file must be a regular file with restricted permissions")
 	}
 	raw, err := io.ReadAll(io.LimitReader(file, maxCredentialFileBytes+1))

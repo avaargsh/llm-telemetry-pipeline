@@ -54,6 +54,18 @@ func TestM11DurableHTTPExporterReceiverUsesIndependentDatabases(t *testing.T) {
 		t.Skip("TEST_RECEIVER_POSTGRES_DSN not set; independent receiver database integration test")
 	}
 	receiverDB := openM11ReceiverRoleDB(t, receiverDSN)
+	receiverAdminDB, err := sql.Open("pgx", receiverDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminPingCtx, adminPingCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := receiverAdminDB.PingContext(adminPingCtx); err != nil {
+		adminPingCancel()
+		_ = receiverAdminDB.Close()
+		t.Fatalf("connect receiver database cleanup principal: %v", err)
+	}
+	adminPingCancel()
+	t.Cleanup(func() { _ = receiverAdminDB.Close() })
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 
@@ -68,10 +80,20 @@ func TestM11DurableHTTPExporterReceiverUsesIndependentDatabases(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
+		// Clean each disposable database with its own administrative test
+		// connection; the receiver's runtime pool remains least-privileged.
 		_, _ = senderDB.Exec("DELETE FROM public.genai_observations WHERE tenant_id=$1", tenant)
 		_, _ = senderDB.Exec("DELETE FROM public.genai_observation_receipts WHERE tenant_id=$1", tenant)
 		_, _ = senderDB.Exec("DELETE FROM public.genai_observation_delivery_receipts WHERE tenant_id=$1", tenant)
 		_, _ = senderDB.Exec(`UPDATE public.genai_observation_queue_state
+SET queue_items=(SELECT count(*) FROM public.genai_observations),
+    receipt_items=(SELECT count(*) FROM public.genai_observation_receipts),
+    delivery_receipt_items=(SELECT count(*) FROM public.genai_observation_delivery_receipts),
+    capacity_limit=0 WHERE singleton=true`)
+		_, _ = receiverAdminDB.Exec("DELETE FROM public.genai_observations WHERE tenant_id=$1", tenant)
+		_, _ = receiverAdminDB.Exec("DELETE FROM public.genai_observation_receipts WHERE tenant_id=$1", tenant)
+		_, _ = receiverAdminDB.Exec("DELETE FROM public.genai_observation_delivery_receipts WHERE tenant_id=$1", tenant)
+		_, _ = receiverAdminDB.Exec(`UPDATE public.genai_observation_queue_state
 SET queue_items=(SELECT count(*) FROM public.genai_observations),
     receipt_items=(SELECT count(*) FROM public.genai_observation_receipts),
     delivery_receipt_items=(SELECT count(*) FROM public.genai_observation_delivery_receipts),

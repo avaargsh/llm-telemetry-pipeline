@@ -106,3 +106,23 @@ func TestCredentialFilePathMustBeConfigured(t *testing.T) {
 		t.Fatalf("empty path accepted: %+v %v", credentials, err)
 	}
 }
+
+func TestLoadCredentialsAcceptsGroupReadableProjectedSecret(t *testing.T) {
+	path := writeCredentials(t, "[{\"token\":\""+receiverTestToken+"\",\"tenant_id\":\"tenant-a\"}]")
+	if err := os.Chmod(path, 0o440); err != nil {
+		t.Fatal(err)
+	}
+	if credentials, err := loadCredentials(path); err != nil || len(credentials) != 1 {
+		t.Fatalf("group-readable projected Secret rejected: credentials=%v err=%v", credentials, err)
+	}
+}
+
+func TestLoadCredentialsRejectsWorldReadableSecret(t *testing.T) {
+	path := writeCredentials(t, "[{\"token\":\""+receiverTestToken+"\",\"tenant_id\":\"tenant-a\"}]")
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if credentials, err := loadCredentials(path); err == nil || credentials != nil {
+		t.Fatalf("world-readable credential file accepted: credentials=%v err=%v", credentials, err)
+	}
+}
