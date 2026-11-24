@@ -188,3 +188,24 @@ func TestDurableStoreCapacityIsGlobalAcrossConcurrentWriters(t *testing.T) {
 	if admitted!=2||full!=writers-2 { t.Fatalf("admitted=%d full=%d; capacity was not globally fenced",admitted,full) }
 	if n,err:=store.Len(context.Background());err!=nil||n!=2 { t.Fatalf("durable count=%d err=%v",n,err) }
 }
+
+type failingObservationAdmitter struct { err error }
+func (f failingObservationAdmitter) MaxBatchSize() int { return MaxBatchSize }
+func (f failingObservationAdmitter) AdmitBatch(context.Context,Scope,string,[]Span) error { return f.err }
+
+func TestOTLPHTTPDurableBackendFailureReturnsRetryable503(t *testing.T) {
+	const token="durable-test-http-token-0123456789abcdef"
+	handler,err:=NewOTLPHTTPHandlerWithAdmitter(failingObservationAdmitter{err:errors.New("database unavailable")},[]OTLPCredential{{Token:token,TenantID:"durable-test-http"}},1)
+	if err!=nil { t.Fatal(err) }
+	server:=httptest.NewTLSServer(handler)
+	defer server.Close()
+	req,err:=http.NewRequest(http.MethodPost,server.URL+"/v1/traces",strings.NewReader(`{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"7123456789abcdef0123456789abcdef","spanId":"1123456789abcdef","status":{"code":1},"attributes":[{"key":"gen_ai.provider.name","value":{"stringValue":"openai"}},{"key":"gen_ai.operation.name","value":{"stringValue":"chat"}}]}]}]}]}`))
+	if err!=nil { t.Fatal(err) }
+	req.Header.Set("Content-Type","application/json")
+	req.Header.Set("Authorization","Bearer "+token)
+	resp,err:=server.Client().Do(req);if err!=nil { t.Fatal(err) }
+	defer resp.Body.Close()
+	if resp.StatusCode!=http.StatusServiceUnavailable||resp.Header.Get("Retry-After")!="1" {
+		t.Fatalf("backend failure must be retryable 503, got %d retry-after=%q",resp.StatusCode,resp.Header.Get("Retry-After"))
+	}
+}
