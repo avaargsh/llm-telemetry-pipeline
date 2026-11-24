@@ -16,6 +16,8 @@ def node(num, ip):
     return {
         "expected_id": num,
         "container_ipv4": ip,
+        "image_ref": diagnostics.KAFKA_IMAGE_REF,
+        "image_id": "sha256:" + "a" * 64,
         "meta": {
             "node.id": str(num),
             "cluster.id": "test-only-cluster",
@@ -57,6 +59,24 @@ other-secret=never-print
     def test_valid_nodes_have_no_identity_or_dns_mismatch(self):
         nodes = {f"broker{i}": node(i, f"172.22.0.{i+10}") for i in (1, 2, 3)}
         self.assertEqual(diagnostics.assess(nodes), [])
+
+    def test_mutable_kafka_tag_is_rejected(self):
+        nodes = {f"broker{i}": node(i, f"172.22.0.{i+10}") for i in (1, 2, 3)}
+        nodes["broker2"]["image_ref"] = "apache/kafka:4.1.0"
+        findings = diagnostics.assess(nodes)
+        self.assertIn("broker2: Kafka image reference differs from pinned digest", findings)
+
+    def test_missing_runtime_image_id_fails_closed(self):
+        nodes = {f"broker{i}": node(i, f"172.22.0.{i+10}") for i in (1, 2, 3)}
+        nodes["broker1"].pop("image_id")
+        findings = diagnostics.assess(nodes)
+        self.assertIn("broker1: missing Docker image ID", findings)
+
+    def test_runtime_image_ids_must_match_across_brokers(self):
+        nodes = {f"broker{i}": node(i, f"172.22.0.{i+10}") for i in (1, 2, 3)}
+        nodes["broker3"]["image_id"] = "sha256:" + "b" * 64
+        findings = diagnostics.assess(nodes)
+        self.assertIn("Kafka image IDs differ across brokers", findings)
 
     def test_crossed_dns_detected_even_when_broker_process_alive(self):
         nodes = {f"broker{i}": node(i, f"172.22.0.{i+10}") for i in (1, 2, 3)}

@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 
 NODES = ("broker1", "broker2", "broker3")
+KAFKA_IMAGE_REF = "apache/kafka:4.1.0@sha256:bff074a5d0051dbc0bbbcd25b045bb1fe84833ec0d3c7c965d1797dd289ec88f"
 META_KEYS = frozenset(("node.id", "cluster.id", "directory.id"))
 QUORUM_KEYS = frozenset(("ClusterId", "LeaderId", "LeaderEpoch",
                          "HighWatermark", "CurrentVoters", "CurrentObservers",
@@ -47,6 +48,7 @@ def assess(nodes):
                     for name in NODES}
     cluster = None
     directory_seen = set()
+    image_ids = set()
     for name in NODES:
         n = nodes.get(name, {})
         expected = int(name[-1])
@@ -66,12 +68,21 @@ def assess(nodes):
             directory_seen.add(directory_id)
         if not expected_ips[name]:
             findings.append(f"{name}: no Docker container IPv4")
+        if n.get("image_ref") != KAFKA_IMAGE_REF:
+            findings.append(f"{name}: Kafka image reference differs from pinned digest")
+        image_id = n.get("image_id", "")
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
+            findings.append(f"{name}: missing Docker image ID")
+        else:
+            image_ids.add(image_id)
         for destination in NODES:
             resolved = n.get("dns_from_node", {}).get(destination, "")
             if not resolved:
                 findings.append(f"{name}: dns {destination} unavailable")
             elif expected_ips[destination] and resolved != expected_ips[destination]:
                 findings.append(f"{name}: dns {destination} does not match container IPv4")
+    if len(image_ids) > 1:
+        findings.append("Kafka image IDs differ across brokers")
     return findings
 
 
@@ -107,6 +118,21 @@ def container_ipv4(service):
         return "", "invalid_docker_inspect_json"
 
 
+def container_image_identity(service):
+    cid, err = command([*COMPOSE, "ps", "-q", service], timeout=5)
+    if err or not cid.strip():
+        return "", "", err or "missing_container"
+    output, err = command(
+        ["docker", "inspect", "--format", "{{.Config.Image}}|{{.Image}}",
+         cid.strip()], timeout=5)
+    if err:
+        return "", "", err
+    image_ref, separator, image_id = output.strip().partition("|")
+    if not separator or not image_ref or not image_id:
+        return "", "", "invalid_image_identity"
+    return image_ref, image_id, ""
+
+
 def run_context():
     return {
         "exact_head": os.getenv("M3B_EXACT_HEAD", ""),
@@ -123,6 +149,9 @@ def snapshot(phase):
         n["container_ipv4"], err = container_ipv4(node)
         if err:
             n["errors"].append("container_ipv4:" + err)
+        n["image_ref"], n["image_id"], err = container_image_identity(node)
+        if err:
+            n["errors"].append("image_identity:" + err)
         meta, err = command([*COMPOSE, "exec", "-T", node,
                              "cat", "/tmp/kraft-combined-logs/meta.properties"])
         n["meta"] = parse_properties(meta)
@@ -203,6 +232,8 @@ def main():
         "node_status": {
             name: {
                 "docker_ipv4": node["container_ipv4"],
+                "kafka_image_ref": node["image_ref"],
+                "docker_image_id": node["image_id"],
                 "persisted_node_id": node["meta"].get("node.id"),
                 "directory_id": node["meta"].get("directory.id"),
                 "quorum_leader_id": node["quorum"].get("LeaderId"),
