@@ -128,6 +128,14 @@ jobs:
           docker rm -f m11-otel-collector || true
           docker compose -f deployments/docker-compose.yml down -v
  ./internal/ledger
+      - name: Durable receiver idempotency receipt semantics
+        env:
+          TEST_POSTGRES_DSN: postgres://telemetry:localdev-only@localhost:15432/telemetry?sslmode=disable
+        run: go test -race -count=1 -v -run '^TestDurableStore(IdempotencyKeyReceiptSemantics|RejectsInvalidIdempotencyKeys)$' ./internal/genaiobs
+      - name: Durable HTTP exporter → receiver ACK-loss and worker-replacement test
+        env:
+          TEST_POSTGRES_DSN: postgres://telemetry:localdev-only@localhost:15432/telemetry?sslmode=disable
+        run: go test -race -count=1 -v -run '^TestM11DurableHTTPExporterReceiverPersistsKeyAcrossAckLoss$' ./internal/ledger
       - name: Collect Collector and PostgreSQL logs
         if: always()
         run: |
