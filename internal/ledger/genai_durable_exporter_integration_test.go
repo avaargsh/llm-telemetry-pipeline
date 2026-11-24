@@ -115,18 +115,16 @@ WHERE singleton=true`)
 		t.Fatal(err)
 	}
 	policy := genaiobs.RetryPolicy{MaxAttempts: 3, InitialBackoff: time.Second, MaxBackoff: time.Second, Jitter: 0}
-	firstWorker, err := genaiobs.NewDurableWorker(durable, exporter, "worker-before-restart", time.Minute, policy)
-	if err != nil {
-		t.Fatal(err)
+	claimed, err := durable.Claim(ctx, "worker-before-crash", time.Second, 1)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("pre-crash claim=%d err=%v", len(claimed), err)
 	}
-	if delivered, err := firstWorker.RunOnce(ctx); delivered || !errors.Is(err, genaiobs.ErrRetryScheduled) {
-		t.Fatalf("first delivery=%v err=%v; want retry after lost ACK", delivered, err)
+	// The receiver commits the key, but the proxy drops the ACK. Abandon the
+	// lease without Retry/Ack/Release to model the sender process disappearing.
+	if err := exporter.Export(ctx, claimed[0]); err == nil {
+		t.Fatal("lost receiver ACK should be reported as a retryable transport error")
 	}
-
-	var observationID int64
-	if err := db.QueryRowContext(ctx, "SELECT observation_id FROM genai_observations WHERE tenant_id=$1 AND trace_id=$2 AND span_id=$3", tenantA, observation.TraceID, observation.SpanID).Scan(&observationID); err != nil {
-		t.Fatal(err)
-	}
+	observationID := claimed[0].ID
 	expectedKey := fmt.Sprintf("genaiobs/%d", observationID)
 	var receipts int
 	if err := db.QueryRowContext(ctx, "SELECT count(*) FROM genai_observation_delivery_receipts WHERE tenant_id=$1 AND idempotency_key=$2", tenantA, expectedKey).Scan(&receipts); err != nil {
@@ -135,13 +133,20 @@ WHERE singleton=true`)
 	if receipts != 1 {
 		t.Fatalf("receiver did not persist the delivery key: %d", receipts)
 	}
-	if _, err := db.ExecContext(ctx, "UPDATE genai_observations SET available_at=now()-interval '1 second' WHERE observation_id=$1", observationID); err != nil {
+	var leaseOwner string
+	if err := db.QueryRowContext(ctx, "SELECT lease_owner FROM genai_observations WHERE observation_id=$1", observationID).Scan(&leaseOwner); err != nil {
+		t.Fatal(err)
+	}
+	if leaseOwner != "worker-before-crash" {
+		t.Fatalf("unacknowledged lease owner=%q", leaseOwner)
+	}
+	// Expire the persisted lease deterministically instead of sleeping. The
+	// replacement worker must reclaim the row after the first process is gone.
+	if _, err := db.ExecContext(ctx, "UPDATE genai_observations SET lease_until=now()-interval '1 second' WHERE observation_id=$1", observationID); err != nil {
 		t.Fatal(err)
 	}
 
-	// A replacement process claims the expired/retryable row. The stable key
-	// must not depend on worker identity or attempt number.
-	replacementWorker, err := genaiobs.NewDurableWorker(durable, exporter, "worker-after-restart", time.Minute, policy)
+	replacementWorker, err := genaiobs.NewDurableWorker(durable, exporter, "worker-after-crash", time.Minute, policy)
 	if err != nil {
 		t.Fatal(err)
 	}
