@@ -48,7 +48,7 @@ def expected_image_ref():
 
 
 def image_reference_identity(image_ref):
-    match = re.fullmatch(r"apache/kafka:(\\d+\\.\\d+\\.\\d+)@sha256:([0-9a-f]{64})",
+    match = re.fullmatch(r"apache/kafka:(\d+\.\d+\.\d+)@sha256:([0-9a-f]{64})",
                          image_ref or "")
     if not match:
         return "", ""
@@ -74,7 +74,7 @@ def container_runtime_identity(service):
                           "/opt/kafka/bin/kafka-topics.sh", "--version"], timeout=10)
     if err:
         return {}, "kafka_version:" + err
-    match = re.search(r"(?m)^\\s*(\\d+\\.\\d+\\.\\d+)\\s*$", kafka)
+    match = re.search(r"(?m)^\s*(\d+\.\d+\.\d+)\s*$", kafka)
     if not match:
         return {}, "invalid_kafka_version"
     java, err = command([*COMPOSE, "exec", "-T", service,
