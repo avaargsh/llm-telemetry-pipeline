@@ -1,0 +1,103 @@
+name: m11-real-collector-receiver-fault-injection
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - ".github/workflows/m11-collector-fault.yml"
+      - "deployments/otel-collector-m11.yaml"
+      - "internal/genaiobs/**"
+      - "internal/ledger/**"
+      - "migrations/postgres/**"
+      - "go.mod"
+      - "go.sum"
+  pull_request:
+    paths:
+      - ".github/workflows/m11-collector-fault.yml"
+      - "deployments/otel-collector-m11.yaml"
+      - "internal/genaiobs/**"
+      - "internal/ledger/**"
+      - "migrations/postgres/**"
+      - "go.mod"
+      - "go.sum"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  real-collector-receiver-fault-injection:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact tested HEAD
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go mod download
+      - run: go mod verify
+      - name: Start PostgreSQL 17 and apply the real schema migrations
+        run: docker compose -f deployments/docker-compose.yml up -d postgres
+      - name: Wait for Ledger, Outbox and durable observation schema
+        run: |
+          for i in $(seq 1 60); do
+            if docker compose -f deployments/docker-compose.yml exec -T postgres \
+              psql -U telemetry -d telemetry -tAc \
+              "SELECT to_regclass('public.usage_ledger') IS NOT NULL AND to_regclass('public.event_outbox') IS NOT NULL AND to_regclass('public.genai_observation_queue_state') IS NOT NULL" \
+              | grep -q t; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose -f deployments/docker-compose.yml logs postgres
+          exit 1
+      - name: Start pinned OpenTelemetry Collector contrib
+        run: |
+          docker run --detach --name m11-otel-collector --network host \
+            --volume "$PWD/deployments/otel-collector-m11.yaml:/etc/otelcol-contrib/config.yaml:ro" \
+            otel/opentelemetry-collector-contrib:0.120.0 \
+            --config=/etc/otelcol-contrib/config.yaml
+      - name: Wait for Collector health endpoint
+        run: |
+          for i in $(seq 1 45); do
+            if curl --fail --silent http://127.0.0.1:13133/ >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs m11-otel-collector
+          exit 1
+      - name: Real Collector → authenticated durable Receiver fault injection
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          TEST_POSTGRES_DSN: postgres://telemetry:localdev-only@localhost:15432/telemetry?sslmode=disable
+          M11_COLLECTOR_ENDPOINT: http://127.0.0.1:4318
+          M11_EVIDENCE_PATH: artifacts/m11-collector-fault/evidence.json
+        run: go test -race -count=1 -v -run '^TestM11RealCollectorFaultInjectionAndLedgerOutboxInvariance$' ./internal/ledger
+      - name: Collect Collector and PostgreSQL logs
+        if: always()
+        run: |
+          mkdir -p artifacts/m11-collector-fault
+          docker logs m11-otel-collector > artifacts/m11-collector-fault/collector.log 2>&1 || true
+          docker compose -f deployments/docker-compose.yml logs postgres > artifacts/m11-collector-fault/postgres.log 2>&1 || true
+      - name: Archive exact-HEAD fault-injection evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m11-real-collector-fault-injection-evidence
+          path: artifacts/m11-collector-fault/
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Stop isolated Collector and PostgreSQL environment
+        if: always()
+        run: |
+          docker rm -f m11-otel-collector || true
+          docker compose -f deployments/docker-compose.yml down -v
