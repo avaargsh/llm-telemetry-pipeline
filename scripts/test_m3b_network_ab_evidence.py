@@ -101,6 +101,41 @@ class NetworkABContract(unittest.TestCase):
             with self.subTest(value=value),self.assertRaises(ValueError):
                 evidence.assess("dynamic",HEAD,receipt(),a,sockets(),same,same)
 
+
+    def test_failed_recovery_preserves_reassignment_without_pass(self):
+        r=receipt()
+        r.update(result="INCOMPLETE", all_acknowledged_verified=False)
+        a=audit()
+        a.update(ip_changed_nodes=["broker1","broker2"],
+                 verdict="VOTER_TARGET_ID_MISMATCH_OBSERVED",
+                 observed_voter_target_mismatches=[
+                     {"sender_id":3,"receiver_id":1,"target_id":2,"count":500}])
+        before=nodes(["172.18.0.4","172.18.0.2","172.18.0.3"])
+        after=nodes(["172.18.0.2","172.18.0.4","172.18.0.3"])
+        result=evidence.assess_failed_run("dynamic",HEAD,r,a,sockets(),before,after)
+        self.assertEqual(result["result"],"FAILED_RUN_RECOVERY_UNVERIFIED")
+        self.assertEqual(result["endpoint_exposure"],"ADDRESS_REASSIGNMENT_OBSERVED")
+        self.assertEqual(len(result["reassigned_addresses"]),2)
+        self.assertEqual(result["cross_target_voter_request_count"],500)
+        self.assertFalse(result["acknowledged_readback_verified"])
+        self.assertFalse(result["causal_root_cause_proven"])
+        with self.assertRaises(ValueError):
+            evidence.assess("dynamic",HEAD,r,a,sockets(),before,after)
+
+    def test_failed_run_cannot_reuse_another_head(self):
+        r=receipt()
+        r["exact_head"]="wrong-head"
+        same=nodes(["172.18.0.2","172.18.0.3","172.18.0.4"])
+        with self.assertRaises(ValueError):
+            evidence.assess_failed_run("dynamic",HEAD,r,audit(),sockets(),same,same)
+
+    def test_failed_run_with_success_receipt_stays_failed(self):
+        same=nodes(["172.18.0.2","172.18.0.3","172.18.0.4"])
+        result=evidence.assess_failed_run("pinned",HEAD,receipt(),audit(),sockets(),same,same)
+        self.assertEqual(result["result"],"FAILED_RUN_RECOVERY_UNVERIFIED")
+        self.assertFalse(result["acknowledged_readback_verified"])
+        self.assertEqual(result["kafka_report_result"],"PASS_EXPERIMENT_ONLY")
+
     def test_unbound_head_and_malformed_mode_fail(self):
         for profile,head in (("dynamic","UNBOUND"),("fixed",HEAD),("random",HEAD)):
             with self.subTest(profile=profile,head=head),self.assertRaises(ValueError):
