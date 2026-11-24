@@ -43,12 +43,37 @@ func openM11ReceiverRoleDB(t *testing.T, dsn string) *sql.DB {
 	return db
 }
 
+
+func openM11WorkerRoleDB(t *testing.T, dsn string) *sql.DB {
+	t.Helper()
+	config, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal("invalid sender database configuration")
+	}
+	db := stdlib.OpenDB(*config, stdlib.OptionAfterConnect(func(ctx context.Context, conn *pgx.Conn) error {
+		if _, err := conn.Exec(ctx, "SET ROLE llm_telemetry_observation_worker"); err != nil {
+			return err
+		}
+		_, err := conn.Exec(ctx, "SET search_path TO pg_catalog, public")
+		return err
+	}))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		db.Close()
+		t.Fatalf("connect with worker capability role: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
 // This is a true two-database delivery test: the sender queue and the
 // receiver's observation/receipt tables are hosted in different databases.
 // The receiver connection assumes its NOLOGIN capability role on every
 // physical connection, rather than using the database owner for admission.
 func TestM11DurableHTTPExporterReceiverUsesIndependentDatabases(t *testing.T) {
 	senderDB := testDB(t)
+	senderWorkerDB := openM11WorkerRoleDB(t, os.Getenv("TEST_POSTGRES_DSN"))
 	receiverDSN := os.Getenv("TEST_RECEIVER_POSTGRES_DSN")
 	if receiverDSN == "" {
 		t.Skip("TEST_RECEIVER_POSTGRES_DSN not set; independent receiver database integration test")
@@ -72,6 +97,10 @@ func TestM11DurableHTTPExporterReceiverUsesIndependentDatabases(t *testing.T) {
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
 	tenant := "ledger-m11-7-separated-" + suffix
 	senderStore, err := genaiobs.NewDurableStore(senderDB, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	senderWorkerStore, err := genaiobs.NewDurableStore(senderWorkerDB, 8)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +199,11 @@ SET queue_items=(SELECT count(*) FROM public.genai_observations),
 	if err != nil {
 		t.Fatal(err)
 	}
-	claimed, err := senderStore.Claim(ctx, "sender-before-restart", time.Second, 1)
+	stats, err := senderWorkerStore.Stats(ctx)
+	if err != nil || stats.Pending != 1 || stats.Capacity != 8 {
+		t.Fatalf("worker-role queue stats=%+v err=%v", stats, err)
+	}
+	claimed, err := senderWorkerStore.Claim(ctx, "sender-before-restart", time.Second, 1)
 	if err != nil || len(claimed) != 1 {
 		t.Fatalf("sender claim=%d err=%v", len(claimed), err)
 	}
@@ -219,7 +252,7 @@ SET queue_items=(SELECT count(*) FROM public.genai_observations),
 		t.Fatalf("expire sender lease: affected=%d err=%v", affected, err)
 	}
 	replacement, err := genaiobs.NewDurableWorker(
-		senderStore, exporter, "sender-after-restart", time.Minute,
+		senderWorkerStore, exporter, "sender-after-restart", time.Minute,
 		genaiobs.RetryPolicy{MaxAttempts: 3, InitialBackoff: time.Second, MaxBackoff: time.Second, Jitter: 0},
 	)
 	if err != nil {

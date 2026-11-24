@@ -49,6 +49,25 @@ END
 $function$;
 
 REVOKE ALL ON FUNCTION public.ensure_genai_observation_capacity(BIGINT) FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.expire_genai_observation_receipts()
+RETURNS TABLE(expired_receipts BIGINT, expired_delivery_receipts BIGINT)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $function$
+BEGIN
+	DELETE FROM public.genai_observation_receipts WHERE expires_at <= now();
+	GET DIAGNOSTICS expired_receipts = ROW_COUNT;
+	DELETE FROM public.genai_observation_delivery_receipts WHERE expires_at <= now();
+	GET DIAGNOSTICS expired_delivery_receipts = ROW_COUNT;
+	RETURN NEXT;
+END
+$function$;
+
+REVOKE ALL ON FUNCTION public.expire_genai_observation_receipts() FROM PUBLIC;
+
+REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO llm_telemetry_observation_receiver, llm_telemetry_observation_worker;
 
 REVOKE ALL ON TABLE public.genai_observations,
@@ -60,8 +79,10 @@ REVOKE ALL ON TABLE public.genai_observations,
 FROM PUBLIC, llm_telemetry_observation_receiver, llm_telemetry_observation_worker;
 
 GRANT SELECT, INSERT ON TABLE public.genai_observations TO llm_telemetry_observation_receiver;
-GRANT SELECT, INSERT, DELETE ON TABLE public.genai_observation_receipts TO llm_telemetry_observation_receiver;
-GRANT SELECT, INSERT, DELETE ON TABLE public.genai_observation_delivery_receipts TO llm_telemetry_observation_receiver;
+GRANT SELECT, INSERT ON TABLE public.genai_observation_receipts TO llm_telemetry_observation_receiver;
+GRANT SELECT, INSERT ON TABLE public.genai_observation_delivery_receipts TO llm_telemetry_observation_receiver;
+GRANT EXECUTE ON FUNCTION public.expire_genai_observation_receipts()
+	TO llm_telemetry_observation_receiver;
 GRANT SELECT ON TABLE public.genai_observation_queue_state TO llm_telemetry_observation_receiver;
 GRANT UPDATE (queue_items, receipt_items, delivery_receipt_items)
 	ON TABLE public.genai_observation_queue_state TO llm_telemetry_observation_receiver;

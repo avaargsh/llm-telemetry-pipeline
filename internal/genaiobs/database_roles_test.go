@@ -61,6 +61,14 @@ func TestObservationDatabaseRolesAreIsolatedFromBillingAuthority(t *testing.T) {
 			if roleHasColumnPrivilege(t, tx, "public.genai_observation_queue_state", "capacity_limit", "UPDATE") {
 				t.Fatalf("%s must not be able to change immutable queue capacity", role)
 			}
+			var canCreateInPublic bool
+			if err := tx.QueryRowContext(ctx, "SELECT has_schema_privilege(current_user, 'public', 'CREATE')").Scan(&canCreateInPublic); err != nil {
+				t.Fatal(err)
+			}
+			if canCreateInPublic {
+				t.Fatalf("%s inherits or owns CREATE on public schema", role)
+			}
+			assertPermissionDenied(t, tx, "CREATE TABLE public.m11_role_schema_bypass_probe (id integer)")
 			assertPermissionDenied(t, tx,
 				"UPDATE public.genai_observation_queue_state SET capacity_limit = capacity_limit + 1 WHERE singleton = true")
 			for _, table := range []string{"public.usage_ledger", "public.event_outbox"} {
@@ -89,12 +97,14 @@ func TestObservationReceiverAndWorkerHaveDisjointDatabaseCapabilities(t *testing
 			role: "llm_telemetry_observation_receiver",
 			allow: map[string][]string{
 				"public.genai_observations":                  {"SELECT", "INSERT"},
-				"public.genai_observation_receipts":          {"SELECT", "INSERT", "DELETE"},
-				"public.genai_observation_delivery_receipts": {"SELECT", "INSERT", "DELETE"},
+				"public.genai_observation_receipts":          {"SELECT", "INSERT"},
+				"public.genai_observation_delivery_receipts": {"SELECT", "INSERT"},
 				"public.genai_observation_queue_state":       {"SELECT"},
 			},
 			deny: map[string][]string{
-				"public.genai_observations": {"UPDATE", "DELETE"},
+				"public.genai_observations":                  {"UPDATE", "DELETE"},
+				"public.genai_observation_receipts":          {"DELETE"},
+				"public.genai_observation_delivery_receipts": {"DELETE"},
 			},
 			allowColumn: map[string][]string{
 				"public.genai_observation_queue_state": {"queue_items", "receipt_items", "delivery_receipt_items"},
@@ -175,16 +185,17 @@ func TestObservationReceiverAndWorkerHaveDisjointDatabaseCapabilities(t *testing
 				assertPermissionDenied(t, tx,
 					"UPDATE public.genai_observations SET payload_hash = payload_hash WHERE observation_id = 1")
 			}
-			var canExecute bool
-			if err := tx.QueryRowContext(ctx,
-				"SELECT has_function_privilege(current_user, 'public.ensure_genai_observation_capacity(bigint)', 'EXECUTE')").Scan(&canExecute); err != nil {
+			var canInitialize, canExpire bool
+			if err := tx.QueryRowContext(ctx, `SELECT
+has_function_privilege(current_user, 'public.ensure_genai_observation_capacity(bigint)', 'EXECUTE'),
+has_function_privilege(current_user, 'public.expire_genai_observation_receipts()', 'EXECUTE')`).Scan(&canInitialize, &canExpire); err != nil {
 				t.Fatal(err)
 			}
-			if tc.role == "llm_telemetry_observation_receiver" && !canExecute {
-				t.Fatal("receiver cannot execute the immutable capacity initializer")
+			if tc.role == "llm_telemetry_observation_receiver" && (!canInitialize || !canExpire) {
+				t.Fatal("receiver lacks the restricted capacity or receipt-expiry function")
 			}
-			if tc.role == "llm_telemetry_observation_worker" && canExecute {
-				t.Fatal("worker unexpectedly has capacity initializer authority")
+			if tc.role == "llm_telemetry_observation_worker" && (canInitialize || canExpire) {
+				t.Fatal("worker unexpectedly has receiver-only function authority")
 			}
 		})
 	}

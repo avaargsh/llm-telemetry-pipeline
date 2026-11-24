@@ -150,17 +150,12 @@ FROM public.genai_observation_queue_state WHERE singleton=true FOR UPDATE`).Scan
 	if configuredCapacity!=int64(s.Capacity) {
 		return ErrInvalidDurableConfig
 	}
-	expiredResult,expireErr:=tx.ExecContext(ctx,"DELETE FROM public.genai_observation_receipts WHERE expires_at<=now()")
-	if expireErr!=nil { return fmt.Errorf("expire observation dedupe receipts: %w",expireErr) }
-	expired,expireErr:=expiredResult.RowsAffected()
-	if expireErr!=nil { return expireErr }
+	var expired,expiredDelivery int64
+	if err=tx.QueryRowContext(ctx,"SELECT expired_receipts,expired_delivery_receipts FROM public.expire_genai_observation_receipts()").Scan(&expired,&expiredDelivery);err!=nil {
+		return fmt.Errorf("expire observation receipts through restricted database function: %w",err)
+	}
 	receiptCount-=expired
 	if receiptCount<0 { return errors.New("durable observation receipt counter is inconsistent") }
-
-	expiredDeliveryResult,expireDeliveryErr:=tx.ExecContext(ctx,"DELETE FROM public.genai_observation_delivery_receipts WHERE expires_at<=now()")
-	if expireDeliveryErr!=nil { return fmt.Errorf("expire delivery idempotency receipts: %w",expireDeliveryErr) }
-	expiredDelivery,expireDeliveryErr:=expiredDeliveryResult.RowsAffected()
-	if expireDeliveryErr!=nil { return expireDeliveryErr }
 	deliveryReceiptCount-=expiredDelivery
 	if deliveryReceiptCount<0 { return errors.New("durable delivery receipt counter is inconsistent") }
 
