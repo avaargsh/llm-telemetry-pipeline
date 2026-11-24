@@ -271,17 +271,19 @@ the digest-qualified Kafka image profile.
 
 ## Controlled Kafka 4.1.0 vs 4.1.2 image-bundle comparison
 
-The pinned-IP network A/B workflow now runs three independent trials against
-both the existing Kafka 4.1.0 baseline and an isolated Kafka 4.1.2 candidate.
-The candidate Compose file is copied from the baseline and changes only the
-three digest-qualified broker image references. Static voter IDs, fixed lab
-IPv4 addresses, named volumes, heap, listeners, topic RF/minISR, the Go fault
-test, and the ACK/ISR recovery gates remain the same.
+The network A/B workflow runs three independent trials for each of four
+version/topology combinations. Kafka 4.1.0 remains the baseline; Kafka 4.1.2
+is the candidate. Both versions are tested under the fixed-IP control and the
+same dynamic-IP fault profile. Each candidate Compose file is copied from
+its matching baseline and changes only the three digest-qualified broker
+image references.
 
-| Profile | Image reference | Runtime evidence |
-|---|---|---|
-| Baseline | `apache/kafka:4.1.0@sha256:bff074a5d0051dbc0bbbcd25b045bb1fe84833ec0d3c7c965d1797dd289ec88f` | Observed live: Eclipse Adoptium OpenJDK 21.0.8+9-LTS |
-| Candidate | `apache/kafka:4.1.2@sha256:5cc2a2fd93fa2687b44015eee04fb2c3edd9e526bd64bf8bec5ff1e268772e0e` | Captured live from each broker; Docker Hub image metadata lists JDK 21.0.10+7 |
+| Profile | Compose file | Image reference | Runtime evidence |
+|---|---|---|---|
+| `pinned` | `docker-compose-ha.yml` | `apache/kafka:4.1.0@sha256:bff074a5d0051dbc0bbbcd25b045bb1fe84833ec0d3c7c965d1797dd289ec88f` | Observed live: Eclipse Adoptium OpenJDK 21.0.8+9-LTS |
+| `pinned-4.1.2` | `docker-compose-ha-4.1.2.yml` | `apache/kafka:4.1.2@sha256:5cc2a2fd93fa2687b44015eee04fb2c3edd9e526bd64bf8bec5ff1e268772e0e` | Observed live: Eclipse Adoptium OpenJDK 21.0.10+7-LTS |
+| `dynamic` | `docker-compose-ha-dynamic.yml` | `apache/kafka:4.1.0@sha256:bff074a5d0051dbc0bbbcd25b045bb1fe84833ec0d3c7c965d1797dd289ec88f` | Observed live: Eclipse Adoptium OpenJDK 21.0.8+9-LTS |
+| `dynamic-4.1.2` | `docker-compose-ha-dynamic-4.1.2.yml` | `apache/kafka:4.1.2@sha256:5cc2a2fd93fa2687b44015eee04fb2c3edd9e526bd64bf8bec5ff1e268772e0e` | Captured live from each broker; expected to match the pinned 4.1.2 runtime |
 
 The candidate digest is the official Docker Hub multi-platform index digest.
 See the [Kafka 4.1.2 Docker image metadata](https://hub.docker.com/layers/apache/kafka/4.1.2/images/sha256-d50ab7b5df612b3c303f9d8afe8fee59626a5de798addfd626fe1924e3205965).
@@ -295,11 +297,16 @@ historical untreated dynamic-IP RED evidence, prove JVM DNS-cache causality,
 or establish production HA. A failed candidate trial remains a failed
 recovery observation; no ISR, ACK or evidence threshold is weakened.
 
-Manual candidate invocation:
+Manual candidate invocations:
 
 ```bash
 M3B_NETWORK_AB_MODE=pinned \
 M3B_HA_COMPOSE_FILE=deployments/docker-compose-ha-4.1.2.yml \
+M3B_EXPECTED_KAFKA_IMAGE_REF=apache/kafka:4.1.2@sha256:5cc2a2fd93fa2687b44015eee04fb2c3edd9e526bd64bf8bec5ff1e268772e0e \
+bash scripts/m3b-kraft-parallel-smoke.sh
+
+M3B_NETWORK_AB_MODE=dynamic \
+M3B_HA_COMPOSE_FILE=deployments/docker-compose-ha-dynamic-4.1.2.yml \
 M3B_EXPECTED_KAFKA_IMAGE_REF=apache/kafka:4.1.2@sha256:5cc2a2fd93fa2687b44015eee04fb2c3edd9e526bd64bf8bec5ff1e268772e0e \
 bash scripts/m3b-kraft-parallel-smoke.sh
 ```
