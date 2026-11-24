@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -291,6 +294,78 @@ func TestGenAIObservationsDoNotChangeLedger(t *testing.T) {
 		}
 		if _, ok := q.Pop(); ok || q.Len() != 0 {
 			t.Fatal("queue not drained")
+		}
+	})
+	t.Run("OTLP HTTP authenticated admission and retry", func(t *testing.T) {
+		q, err := genaiobs.NewQueue(2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		const tokenA = "test-only-observation-tenant-a-0123456789"
+		const tokenB = "test-only-observation-tenant-b-0123456789"
+		h, err := genaiobs.NewOTLPHTTPHandler(q, []genaiobs.OTLPCredential{
+			{Token: tokenA, TenantID: tenantA},
+			{Token: tokenB, TenantID: tenantB},
+		}, 2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		server := httptest.NewTLSServer(h)
+		defer server.Close()
+		client := server.Client()
+		client.Timeout = 5 * time.Second
+		const wire = `{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"0123456789ABCDEF0123456789ABCDEF","spanId":"0123456789ABCDEF","status":{"code":1},"attributes":[{"key":"gen_ai.provider.name","value":{"stringValue":"openai"}},{"key":"gen_ai.operation.name","value":{"stringValue":"chat"}},{"key":"gen_ai.usage.input_tokens","value":{"intValue":"9007199254740993"}},{"key":"gen_ai.usage.output_tokens","value":{"intValue":0}},{"key":"tenant.id","value":{"stringValue":"ledger-m10-tenant-a"}},{"key":"gen_ai.input.messages","value":{"stringValue":"discard-me"}}]}]}]}]}`
+		post := func(token, body string, status, length int) {
+			t.Helper()
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+"/v1/traces", strings.NewReader(body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Content-Type", "application/json")
+			if token != "" {
+				req.Header.Set("Authorization", "Bearer "+token)
+			}
+			resp, err := client.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			data, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			if err != nil || resp.StatusCode != status || q.Len() != length {
+				t.Fatalf("HTTP admission status=%d queue=%d expected=%d/%d error=%v", resp.StatusCode, q.Len(), status, length, err)
+			}
+			if resp.Header.Get("Content-Type") != "application/json" || strings.Contains(string(data), "discard-me") || strings.Contains(string(data), tokenA) || strings.Contains(string(data), tokenB) {
+				t.Fatal("response format or privacy violation")
+			}
+			if status == http.StatusOK && strings.TrimSpace(string(data)) != "{}" {
+				t.Fatal("unexpected success response")
+			}
+			if status == http.StatusServiceUnavailable && resp.Header.Get("Retry-After") != "1" {
+				t.Fatal("missing retry hint")
+			}
+			unchanged(t)
+		}
+		post("", wire, http.StatusUnauthorized, 0)
+		post("test-only-unrecognized-credential-0123456789", wire, http.StatusUnauthorized, 0)
+		post(tokenB, strings.Replace(wire, `"code":1`, `"code":1,"code":2`, 1), http.StatusBadRequest, 0)
+		post(tokenB, strings.Repeat("x", genaiobs.MaxOTLPJSONBytes+1), http.StatusRequestEntityTooLarge, 0)
+		post(tokenA, wire, http.StatusOK, 1)
+		post(tokenB, wire, http.StatusOK, 2)
+		post(tokenB, wire, http.StatusServiceUnavailable, 2)
+		pop := func(tenant string) {
+			t.Helper()
+			o, ok := q.Pop()
+			if !ok || o.TenantID != tenant || o.InputTokens == nil || *o.InputTokens != 9007199254740993 || o.OutputTokens == nil || *o.OutputTokens != 0 {
+				t.Fatal("HTTP observation changed trusted scope or precision")
+			}
+			unchanged(t)
+		}
+		pop(tenantA)
+		post(tokenB, wire, http.StatusOK, 2)
+		pop(tenantB)
+		pop(tenantB)
+		if _, ok := q.Pop(); ok || q.Len() != 0 {
+			t.Fatal("HTTP queue not drained")
 		}
 	})
 	// The authoritative retry remains a duplicate with exactly the same rows.
