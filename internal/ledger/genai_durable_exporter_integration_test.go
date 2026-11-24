@@ -94,9 +94,19 @@ WHERE singleton=true`)
 		recorded := httptest.NewRecorder()
 		handler.ServeHTTP(recorded, r)
 		if attempt == 1 && recorded.Code == http.StatusOK {
-			// Receiver committed the delivery receipt but its ACK is lost.
-			w.Header().Set("Retry-After", "1")
-			w.WriteHeader(http.StatusServiceUnavailable)
+			// Receiver committed the receipt, then the response connection is
+			// dropped before the sender can observe the ACK.
+			hijacker, ok := w.(http.Hijacker)
+			if !ok {
+				t.Errorf("test server does not support connection hijacking")
+				return
+			}
+			conn, _, err := hijacker.Hijack()
+			if err != nil {
+				t.Errorf("hijack response connection: %v", err)
+				return
+			}
+			_ = conn.Close()
 			return
 		}
 		for name, values := range recorded.Header() {
@@ -141,11 +151,19 @@ WHERE singleton=true`)
 	}
 	// Expire the persisted lease deterministically instead of sleeping. The
 	// replacement worker must reclaim the row after the first process is gone.
-	if _, err := db.ExecContext(ctx, "UPDATE genai_observations SET lease_until=now()-interval '1 second' WHERE observation_id=$1", observationID); err != nil {
+	result, err := db.ExecContext(ctx, "UPDATE genai_observations SET lease_until=now()-interval '1 second' WHERE observation_id=$1 AND lease_owner=$2", observationID, "worker-before-crash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if affected, err := result.RowsAffected(); err != nil || affected != 1 {
+		t.Fatalf("expire abandoned sender lease: affected=%d err=%v", affected, err)
+	}
+	restartedStore, err := genaiobs.NewDurableStore(db, 8)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	replacementWorker, err := genaiobs.NewDurableWorker(durable, exporter, "worker-after-crash", time.Minute, policy)
+	replacementWorker, err := genaiobs.NewDurableWorker(restartedStore, exporter, "worker-after-crash", time.Minute, policy)
 	if err != nil {
 		t.Fatal(err)
 	}

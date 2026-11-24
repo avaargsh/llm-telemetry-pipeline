@@ -86,6 +86,7 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 - [M5 performance baseline, reproducible SLO candidates, and profile comparator](docs/performance.md)
 - [M8 sustained fixed-RPS P95/P99 trial reports and fail-closed SLO evaluator](docs/m8-sustained-slo.md)
 - [M9 real PostgreSQL HA failover under sustained load](docs/m9-pg-ha-sustained.md)
+- [M11.6 durable HTTP exporter, receiver idempotency and worker runtime](docs/m11-durable-http-exporter.md)
 - [OSS readiness, rights provenance and release checklist](docs/oss-readiness.md)
 - [Security reporting and limitations](SECURITY.md)
 - [Contributor preparation and current license boundary](CONTRIBUTING.md)
