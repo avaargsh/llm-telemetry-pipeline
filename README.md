@@ -22,7 +22,7 @@ The ledger transaction is the **only accepted billing record**. Kafka events and
 
 ## Quick start (local demonstration)
 
-Requirements: Go 1.23+, Docker Engine with Compose.
+Requirements: Go 1.27.4 or later, Docker Engine with Compose. CI and Docker build stages validate the selected Go patch version; this is not a deployed production upgrade.
 
 ```bash
 go mod download

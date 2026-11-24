@@ -5,14 +5,28 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      GOTOOLCHAIN: local
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact tested HEAD
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
           cache: false
+      - name: Verify exact Go security baseline
+        run: test "$(go env GOVERSION)" = "go$(awk '$1 == "go" {print $2}' go.mod)"
       - run: go mod download
       - run: go mod verify
       - run: go vet ./...
       - run: go test -race ./...
       - run: go build ./...
+      - name: Build both deployment images with updated Go compiler
+        run: |
+          docker build -f deployments/Dockerfile.lag-exporter -t telemetry-lag-exporter:ci .
+          docker build -f deployments/Dockerfile.m6-scheduled -t telemetry-reconciler:ci .
