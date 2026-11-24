@@ -3,7 +3,7 @@ from m3b_dns_ttl_experiment import verify
 
 HEAD="test-head"
 def observed():
-    return {"exact_head":HEAD,"profile":"dynamic",
+    return {"exact_head":HEAD,"profile":"dynamic-ttl-zero",
             "result":"RECOVERY_VERIFIED_ENDPOINTS_DYNAMIC_OBSERVED",
             "endpoint_exposure":"ADDRESS_REASSIGNMENT_OBSERVED",
             "ip_changed_nodes":["broker1","broker2"],
@@ -13,6 +13,9 @@ def observed():
             "initial_ack_count":35,"acknowledged_readback_verified":True,
             "causal_root_cause_proven":False}
 class MitigationEvidence(unittest.TestCase):
+    def test_untreated_control_cannot_pass_ttl_gate(self):
+        r=observed(); r["profile"]="dynamic"
+        with self.assertRaises(ValueError): verify(HEAD,r)
     def test_exposed_recovery(self):
         self.assertEqual(verify(HEAD,observed()),"EXPOSED_RECOVERY_VERIFIED")
     def test_unexposed_not_success(self):

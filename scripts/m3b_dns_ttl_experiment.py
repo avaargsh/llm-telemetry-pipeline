@@ -7,7 +7,7 @@ from pathlib import Path
 def verify(head, report):
     if not head or head=="UNBOUND" or report.get("exact_head")!=head:
         raise ValueError("wrong exact head")
-    if (report.get("profile")!="dynamic" or
+    if (report.get("profile")!="dynamic-ttl-zero" or
         report.get("result")!="RECOVERY_VERIFIED_ENDPOINTS_DYNAMIC_OBSERVED" or
         report.get("acknowledged_readback_verified") is not True or
         report.get("initial_ack_count")!=35 or

@@ -32,7 +32,7 @@ jobs:
             mode: dynamic
             compose: deployments/docker-compose-ha-dynamic.yml
           - profile: dynamic-ttl-zero
-            mode: dynamic
+            mode: dynamic-ttl-zero
             compose: deployments/docker-compose-ha-dns-ttl-zero.yml
     runs-on: ubuntu-latest
     timeout-minutes: 20
