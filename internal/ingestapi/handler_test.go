@@ -121,3 +121,62 @@ func TestNewHandlerRejectsWeakOrDuplicateCredentials(t *testing.T){
     }
     if _,err:=NewHandler(nil,[]Credential{{Token:testToken,TenantID:"tenant_001",ProjectID:"project_001"}});err==nil{t.Fatal("accepted nil store")}
 }
+
+
+func TestIngestRejectsAmbiguousJSONFields(t *testing.T) {
+    e := sampleEvent(t)
+    raw := toJSON(t, e)
+    for _, tc := range []struct{name, prefix string}{
+        {"duplicate-tenant", `"tenant_id":"other-tenant",`},
+        {"duplicate-token-count", `"prompt_tokens":999999,`},
+        {"case-folded-alias", `"TENANT_ID":"other-tenant",`},
+        {"escaped-key-alias", `"tenant_\u0069d":"other-tenant",`},
+        {"same-value-duplicate", `"tenant_id":"tenant_001",`},
+    } {
+        t.Run(tc.name,func(t *testing.T){
+            s := &fakeRecorder{}
+            body := append([]byte("{"+tc.prefix),raw[1:]...)
+            rr := send(t,newTestHandler(t,s),body,testToken,http.MethodPost)
+            if rr.Code != http.StatusBadRequest || s.calls != 0 {
+                t.Fatalf("ambiguous input accepted: status=%d calls=%d body=%s",rr.Code,s.calls,rr.Body.String())
+            }
+        })
+    }
+    s := &fakeRecorder{}
+    rr := send(t,newTestHandler(t,s),append([]byte(" \n"),raw...),testToken,http.MethodPost)
+    if rr.Code != http.StatusCreated || s.calls != 1 {
+        t.Fatalf("unambiguous input rejected: status=%d calls=%d",rr.Code,s.calls)
+    }
+}
+
+
+func TestIngestRequiresExplicitV1Fields(t *testing.T) {
+    e := sampleEvent(t)
+    e.PromptTokens, e.CompletionTokens, e.LatencyMS = 0, 0, 0
+    if err := e.Seal(); err != nil { t.Fatal(err) }
+    raw := toJSON(t, e)
+    for _, tc := range []struct{name, old, replacement string}{
+        {"case-only-alias", `"tenant_id"`, `"TENANT_ID"`},
+        {"null-input", `"prompt_tokens":0`, `"prompt_tokens":null`},
+        {"missing-input", `"prompt_tokens":0,`, ""},
+        {"null-output", `"completion_tokens":0`, `"completion_tokens":null`},
+        {"missing-output", `"completion_tokens":0,`, ""},
+        {"null-latency", `"latency_ms":0`, `"latency_ms":null`},
+        {"missing-latency", `"latency_ms":0,`, ""},
+    } {
+        t.Run(tc.name, func(t *testing.T) {
+            body := bytes.Replace(raw, []byte(tc.old), []byte(tc.replacement), 1)
+            if bytes.Equal(body, raw) { t.Fatal("fixture did not mutate") }
+            s := &fakeRecorder{}
+            rr := send(t, newTestHandler(t, s), body, testToken, http.MethodPost)
+            if rr.Code != http.StatusBadRequest || s.calls != 0 {
+                t.Fatalf("status=%d calls=%d", rr.Code, s.calls)
+            }
+        })
+    }
+    s := &fakeRecorder{}
+    rr := send(t, newTestHandler(t, s), raw, testToken, http.MethodPost)
+    if rr.Code != http.StatusCreated || s.calls != 1 {
+        t.Fatalf("explicit zero usage rejected: status=%d calls=%d", rr.Code, s.calls)
+    }
+}
