@@ -176,7 +176,7 @@ ON CONFLICT(tenant_id,idempotency_key) DO NOTHING
 RETURNING payload_hash`,o.TenantID,idempotencyKey,item.hash,durableDeliveryReceiptRetention.Milliseconds()).Scan(&receiptHash)
 			if errors.Is(err,sql.ErrNoRows) {
 				if err=tx.QueryRowContext(ctx,`SELECT payload_hash FROM public.genai_observation_delivery_receipts
-WHERE tenant_id=$1 AND idempotency_key=$2 FOR SHARE`,o.TenantID,idempotencyKey).Scan(&receiptHash);err!=nil {
+WHERE tenant_id=$1 AND idempotency_key=$2`,o.TenantID,idempotencyKey).Scan(&receiptHash);err!=nil {
 					return fmt.Errorf("read delivery idempotency receipt: %w",err)
 				}
 				if strings.TrimSpace(receiptHash)!=item.hash { return ErrObservationConflict }
@@ -195,7 +195,7 @@ ON CONFLICT(tenant_id,trace_id,span_id) DO NOTHING
 RETURNING payload_hash`,o.TenantID,o.TraceID,o.SpanID,item.hash,durableReceiptRetention.Milliseconds()).Scan(&receiptHash)
 		if errors.Is(err,sql.ErrNoRows) {
 			if err=tx.QueryRowContext(ctx,`SELECT payload_hash FROM public.genai_observation_receipts
-WHERE tenant_id=$1 AND trace_id=$2 AND span_id=$3 FOR SHARE`,o.TenantID,o.TraceID,o.SpanID).Scan(&receiptHash);err!=nil {
+WHERE tenant_id=$1 AND trace_id=$2 AND span_id=$3`,o.TenantID,o.TraceID,o.SpanID).Scan(&receiptHash);err!=nil {
 				return fmt.Errorf("read observation dedupe receipt: %w",err)
 			}
 			if strings.TrimSpace(receiptHash)!=item.hash { return ErrObservationConflict }
@@ -220,7 +220,7 @@ ON CONFLICT(tenant_id,trace_id,span_id) DO NOTHING`,
 		} else {
 			var existing string
 			if err=tx.QueryRowContext(ctx,`SELECT payload_hash FROM public.genai_observations
-WHERE tenant_id=$1 AND trace_id=$2 AND span_id=$3 FOR SHARE`,o.TenantID,o.TraceID,o.SpanID).Scan(&existing);err!=nil {
+WHERE tenant_id=$1 AND trace_id=$2 AND span_id=$3`,o.TenantID,o.TraceID,o.SpanID).Scan(&existing);err!=nil {
 				return fmt.Errorf("verify existing durable observation: %w",err)
 			}
 			if strings.TrimSpace(existing)!=item.hash { return ErrObservationConflict }
