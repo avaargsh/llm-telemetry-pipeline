@@ -213,3 +213,47 @@ func TestOTLPHTTPDurableBackendFailureReturnsRetryable503(t *testing.T) {
 		t.Fatalf("backend failure must be retryable 503, got %d retry-after=%q",resp.StatusCode,resp.Header.Get("Retry-After"))
 	}
 }
+
+func TestDurableWorkerAcknowledgesOnlyAfterExporterSuccess(t *testing.T) {
+	o:=durableTestObservation("durable-test-worker","8123456789abcdef0123456789abcdef",51)
+	repo:=&durableWorkerRepoFake{delivery:Delivery{ID:88,Observation:o,Attempts:1}}
+	exp:=&durableWorkerExporterFake{}
+	w,err:=NewDurableWorker(repo,exp,"worker-ack",time.Minute,workerTestPolicy())
+	if err!=nil { t.Fatal(err) }
+	delivered,err:=w.RunOnce(context.Background())
+	if !delivered||err!=nil||!repo.acked||repo.retried||repo.terminal!="" {
+		t.Fatalf("delivered=%v err=%v repo=%+v",delivered,err,repo)
+	}
+}
+
+func TestDurableWorkerPermanentFailureRequiresTerminalAction(t *testing.T) {
+	o:=durableTestObservation("durable-test-worker","9123456789abcdef0123456789abcdef",61)
+	repo:=&durableWorkerRepoFake{delivery:Delivery{ID:99,Observation:o,Attempts:1}}
+	exp:=&durableWorkerExporterFake{err:Permanent(errors.New("secret endpoint detail"))}
+	w,err:=NewDurableWorker(repo,exp,"worker-terminal",time.Minute,workerTestPolicy())
+	if err!=nil { t.Fatal(err) }
+	if delivered,err:=w.RunOnce(context.Background());delivered||!errors.Is(err,ErrPermanentFailure) {
+		t.Fatalf("delivered=%v err=%v",delivered,err)
+	}
+	if repo.terminal!="permanent_export_failure"||repo.acked||repo.retried {
+		t.Fatalf("permanent failure did not become terminal: %+v",repo)
+	}
+}
+
+type cancelingDurableExporter struct { cancel context.CancelFunc }
+func (e cancelingDurableExporter) Export(ctx context.Context,_ Delivery) error {
+	e.cancel()
+	return ctx.Err()
+}
+
+func TestDurableWorkerReleasesLeaseWhenExportContextIsCanceled(t *testing.T) {
+	o:=durableTestObservation("durable-test-worker","a123456789abcdef0123456789abcdef",71)
+	repo:=&durableWorkerRepoFake{delivery:Delivery{ID:101,Observation:o,Attempts:1}}
+	ctx,cancel:=context.WithCancel(context.Background())
+	w,err:=NewDurableWorker(repo,cancelingDurableExporter{cancel:cancel},"worker-cancel",time.Minute,workerTestPolicy())
+	if err!=nil { t.Fatal(err) }
+	if delivered,err:=w.RunOnce(ctx);delivered||!errors.Is(err,context.Canceled) {
+		t.Fatalf("delivered=%v err=%v",delivered,err)
+	}
+	if !repo.released||repo.acked||repo.retried { t.Fatalf("canceled export lease not released: %+v",repo) }
+}
