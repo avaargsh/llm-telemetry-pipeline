@@ -14,7 +14,14 @@ func TestDurableStoreIdempotencyKeyReceiptSemantics(t *testing.T) {
 	ctx := context.Background()
 	tenant := fmt.Sprintf("durable-test-key-%d", time.Now().UnixNano())
 	observation := durableTestObservation(tenant, "6123456789abcdef0123456789abcdef", 61)
-	key := "genaiobs/9001"
+	if err := store.Enqueue(ctx, observation); err != nil {
+		t.Fatal(err)
+	}
+	var observationID int64
+	if err := store.DB.QueryRowContext(ctx, "SELECT observation_id FROM genai_observations WHERE tenant_id=$1", tenant).Scan(&observationID); err != nil {
+		t.Fatal(err)
+	}
+	key := fmt.Sprintf("genaiobs/%d", observationID)
 
 	if err := store.EnqueueWithIdempotencyKey(ctx, observation, key); err != nil {
 		t.Fatal(err)
@@ -32,7 +39,7 @@ func TestDurableStoreIdempotencyKeyReceiptSemantics(t *testing.T) {
 
 	// A second key for the same natural observation is recorded but must not
 	// create another queue row.
-	if err := store.EnqueueWithIdempotencyKey(ctx, observation, "genaiobs/9002"); err != nil {
+	if err := store.EnqueueWithIdempotencyKey(ctx, observation, key+"/alternate"); err != nil {
 		t.Fatal(err)
 	}
 	var queued, receipts int
