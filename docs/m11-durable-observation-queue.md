@@ -1,0 +1,27 @@
+# M11.4: durable non-authoritative GenAI observation queue
+
+Refs #56. Migration 002 adds two tables that are deliberately independent of usage_ledger and event_outbox. No foreign key, trigger, or write path connects observations to billing authority.
+
+## Admission and identity
+
+- PostgreSQL is the durable source of truth; the in-memory M11.3 Queue remains available for volatile deployments.
+- EnqueueBatch validates the bounded projection before a transaction, then takes a transaction-scoped advisory lock for a global capacity check. A batch is all-or-nothing.
+- Natural identity is (tenant_id, trace_id, span_id). The payload hash is SHA-256 over the normalized projection. Same identity/same projection is idempotent; same identity/different projection returns ErrObservationConflict.
+- A receipt retains only identity and hash for 24 hours, including after ACK or explicit drop. This suppresses OTLP replay without retaining raw prompts, messages, tool arguments, or payloads. After the receipt expires, an old replay can be admitted again.
+- The configured capacity must be identical across all writers sharing the database. Terminal rows count against capacity and require explicit operator action; this is fail-closed.
+
+## Delivery and recovery
+
+- Claim uses FOR UPDATE SKIP LOCKED and a persisted lease. Every claim increments attempts, which is also the fencing generation.
+- ACK deletes only the current, unexpired lease generation. A stale worker cannot ACK after lease takeover.
+- Retry persists available_at and releases the lease. Restart does not reset retry schedule or attempts.
+- Permanent failures and exhausted attempts become terminal rows and are not automatically claimed. RetryFailed explicitly re-arms and resets attempts; DropFailed explicitly removes a terminal row. Receipts remain for their 24-hour replay window.
+- A process crash leaves its lease until expiry; a replacement worker can then reclaim the same row. Configure lease TTL longer than the exporter's request timeout. Expired in-flight work may be exported twice; consumers must use Delivery.IdempotencyKey and persist it to deduplicate.
+- DurableWorker passes a stable genaiobs/<observation_id> key to DurableExporter. This is an at-least-once contract, not exactly-once. The receiver's durable dedupe implementation and real collector fault injection remain M11.5.
+
+## Bounds and loss semantics
+
+- Queue capacity is bounded to 1..1,000,000 rows. Enqueue admission is serialized with a PostgreSQL advisory lock so concurrent writers cannot exceed the configured bound when they share the same capacity.
+- The database itself is the durability boundary. PostgreSQL outage fails admission closed; no hidden unbounded memory fallback occurs.
+- Only normalized fields and token counts are stored. Error fields persist stable reason codes, never exporter error text.
+- No production delivery SLO is claimed. Backups, retention, database role grants, and operational alerting must be configured by deployment owners.
