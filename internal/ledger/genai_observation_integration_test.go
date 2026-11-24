@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -247,6 +248,49 @@ func TestGenAIObservationsDoNotChangeLedger(t *testing.T) {
 		unchanged(t)
 		if _, ok := q.Pop(); ok || q.Len() != 0 {
 			t.Fatal("batch queue not drained")
+		}
+	})
+	t.Run("OTLP JSON projection rejection replay and drain", func(t *testing.T) {
+		q, err := genaiobs.NewQueue(2)
+		if err != nil {
+			t.Fatal(err)
+		}
+		scope := genaiobs.Scope{TenantID: tenantB}
+		const wire = `{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"0123456789ABCDEF0123456789ABCDEF","spanId":"0123456789ABCDEF","status":{"code":1},"attributes":[{"key":"gen_ai.provider.name","value":{"stringValue":"openai"}},{"key":"gen_ai.operation.name","value":{"stringValue":"chat"}},{"key":"gen_ai.usage.input_tokens","value":{"intValue":"9007199254740993"}},{"key":"gen_ai.usage.output_tokens","value":{"intValue":0}},{"key":"tenant.id","value":{"stringValue":"ledger-m10-tenant-a"}},{"key":"gen_ai.input.messages","value":{"stringValue":"discard-me"}}]}]}]}]}`
+		for _, body := range [][]byte{
+			[]byte(strings.Replace(wire, `"code":1`, `"code":1,"code":2`, 1)),
+			[]byte(strings.Replace(wire, `"intValue":"9007199254740993"`, `"intValue":"-1"`, 1)),
+			make([]byte, genaiobs.MaxOTLPJSONBytes+1),
+		} {
+			if spans, err := genaiobs.DecodeOTLPJSON(body); err == nil || spans != nil || q.Len() != 0 {
+				t.Fatalf("invalid wire batch accepted: %v", err)
+			}
+			unchanged(t)
+		}
+		spans, err := genaiobs.DecodeOTLPJSON([]byte(wire))
+		if err != nil || len(spans) != 1 || len(spans[0].Attributes) != 4 {
+			t.Fatalf("valid wire projection: %v", err)
+		}
+		unchanged(t)
+		for i := 0; i < 2; i++ {
+			if err := q.SubmitBatch(scope, genaiobs.Version, spans); err != nil {
+				t.Fatal(err)
+			}
+			unchanged(t)
+		}
+		if err := q.SubmitBatch(scope, genaiobs.Version, spans); err != genaiobs.ErrQueueFull || q.Len() != 2 {
+			t.Fatalf("expected overload: %v", err)
+		}
+		unchanged(t)
+		for i := 0; i < 2; i++ {
+			o, ok := q.Pop()
+			if !ok || o.TenantID != tenantB || o.TraceID != "0123456789abcdef0123456789abcdef" || o.SpanID != "0123456789abcdef" || o.RequestID != "" || o.AttemptID != "" || o.Status != "ok" || o.InputTokens == nil || *o.InputTokens != 9007199254740993 || o.OutputTokens == nil || *o.OutputTokens != 0 {
+				t.Fatal("wire projection changed scope, identity or integer precision")
+			}
+			unchanged(t)
+		}
+		if _, ok := q.Pop(); ok || q.Len() != 0 {
+			t.Fatal("queue not drained")
 		}
 	})
 	// The authoritative retry remains a duplicate with exactly the same rows.
