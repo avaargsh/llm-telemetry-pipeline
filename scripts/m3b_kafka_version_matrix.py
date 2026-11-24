@@ -165,6 +165,10 @@ def verify(head, reports, expected_trials=3, minimum_exposed=2):
         "exact_head": head,
         "result": "VERSION_COMPARISON_EVIDENCE_COMPLETE",
         "versions": summary,
+        "java_runtime_versions": {
+            version: [summary[version]["java_runtime_version"]]
+            for version in VERSIONS
+        },
         "jdk_changed_with_image_version": (
             summary["4.1.0"]["java_runtime_version"] !=
             summary["4.1.2"]["java_runtime_version"]
