@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -29,8 +30,8 @@ func (e *genAIWorkerTestExporter) Export(_ context.Context,o genaiobs.Observatio
 
 // Compare full authoritative rows, not just counts: a changed token total,
 // digest, event identity or outbox payload must also fail this assertion.
-// Restrict the snapshot to the two isolated test tenants and request prefix
-// so other packages' integration fixtures cannot make this test flaky.
+// Restrict the snapshot to the two isolated test tenants so other packages'
+// integration fixtures cannot make this test flaky.
 func genAIUsageSnapshot(t *testing.T, ctx context.Context, db *sql.DB, tenantA, tenantB string) string {
 	t.Helper()
 	const q = `
@@ -38,16 +39,15 @@ SELECT jsonb_build_object(
   'ledger', COALESCE((
     SELECT jsonb_agg(to_jsonb(l) ORDER BY l.event_id)
     FROM usage_ledger l
-    WHERE l.tenant_id IN ($1, $2) OR l.request_id LIKE 'ledger-m10-%'
+    WHERE l.tenant_id IN ($1, $2)
   ), '[]'::jsonb),
   'outbox', COALESCE((
     SELECT jsonb_agg(to_jsonb(o) ORDER BY o.event_id)
     FROM event_outbox o
     WHERE o.event_payload->>'tenant_id' IN ($1, $2)
-       OR o.event_payload->>'request_id' LIKE 'ledger-m10-%'
        OR o.event_id IN (
          SELECT event_id FROM usage_ledger
-         WHERE tenant_id IN ($1, $2) OR request_id LIKE 'ledger-m10-%'
+         WHERE tenant_id IN ($1, $2)
        )
   ), '[]'::jsonb)
 )::text`
@@ -62,12 +62,17 @@ func TestGenAIObservationsDoNotChangeLedger(t *testing.T) {
 	db := testDB(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	const tenantA = "ledger-m10-tenant-a"
-	const tenantB = "ledger-m10-tenant-b"
+	tenantSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	tenantA := "ledger-m10-tenant-a-" + tenantSuffix
+	tenantB := "ledger-m10-tenant-b-" + tenantSuffix
 	store := Store{DB: db}
-	first := freshEvent(t, "ledger-m10-a")
-	second := freshEvent(t, "ledger-m10-b")
+	first := freshEvent(t, "genai-observation-invariance-"+tenantSuffix+"-a")
+	second := freshEvent(t, "genai-observation-invariance-"+tenantSuffix+"-b")
 	first.TenantID, second.TenantID = tenantA, tenantB
+	// Keep these fixtures outside testDB\x27s broad ledger-% cleanup prefix so a
+	// concurrent package-level integration test cannot delete the snapshot rows.
+	first.RequestID = "genai-observation-invariance-" + tenantSuffix + "-a"
+	second.RequestID = "genai-observation-invariance-" + tenantSuffix + "-b"
 	if err := first.Seal(); err != nil {
 		t.Fatal(err)
 	}
@@ -272,7 +277,7 @@ func TestGenAIObservationsDoNotChangeLedger(t *testing.T) {
 			t.Fatal(err)
 		}
 		scope := genaiobs.Scope{TenantID: tenantB}
-		const wire = `{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"0123456789ABCDEF0123456789ABCDEF","spanId":"0123456789ABCDEF","status":{"code":1},"attributes":[{"key":"gen_ai.provider.name","value":{"stringValue":"openai"}},{"key":"gen_ai.operation.name","value":{"stringValue":"chat"}},{"key":"gen_ai.usage.input_tokens","value":{"intValue":"9007199254740993"}},{"key":"gen_ai.usage.output_tokens","value":{"intValue":0}},{"key":"tenant.id","value":{"stringValue":"ledger-m10-tenant-a"}},{"key":"gen_ai.input.messages","value":{"stringValue":"discard-me"}}]}]}]}]}`
+		wire := strings.Replace(`{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"0123456789ABCDEF0123456789ABCDEF","spanId":"0123456789ABCDEF","status":{"code":1},"attributes":[{"key":"gen_ai.provider.name","value":{"stringValue":"openai"}},{"key":"gen_ai.operation.name","value":{"stringValue":"chat"}},{"key":"gen_ai.usage.input_tokens","value":{"intValue":"9007199254740993"}},{"key":"gen_ai.usage.output_tokens","value":{"intValue":0}},{"key":"tenant.id","value":{"stringValue":"ledger-m10-tenant-a"}},{"key":"gen_ai.input.messages","value":{"stringValue":"discard-me"}}]}]}]}]}`, `"ledger-m10-tenant-a"`, `"`+tenantA+`"`, 1)
 		for _, body := range [][]byte{
 			[]byte(strings.Replace(wire, `"code":1`, `"code":1,"code":2`, 1)),
 			[]byte(strings.Replace(wire, `"intValue":"9007199254740993"`, `"intValue":"-1"`, 1)),
