@@ -14,7 +14,7 @@ import pathlib
 import tempfile
 
 NODES = ("broker1","broker2","broker3")
-MODES = {"pinned","dynamic"}
+MODES = {"pinned","dynamic","dynamic-ttl-zero"}
 
 
 def ensure(ok, reason):

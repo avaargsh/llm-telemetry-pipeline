@@ -1,6 +1,6 @@
 # Deliberate disposable HA experiment; separate from developer single-broker Compose.
 # Three combined KRaft broker/controller nodes are for CI only.
-# EXPERIMENTAL DYNAMIC-IP COUNTERFACTUAL ONLY. No fixed Docker IPAM.
+# EXPERIMENTAL DYNAMIC-IP COUNTERFACTUAL ONLY. Initial broker IPs are dynamically allocated.
 # Compare to deployments/docker-compose-ha.yml with identical Kafka version,
 # quorum voter IDs, volume lifecycle, ack/readback assertions and fault script.
 # This Docker bridge network can reassign broker IPs after stop/start.
@@ -77,3 +77,8 @@ volumes:
   broker1_data:
   broker2_data:
   broker3_data:
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.29.242.0/24

@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 profile="${M3B_NETWORK_AB_MODE:-pinned}"
 compose_file="${M3B_HA_COMPOSE_FILE:-deployments/docker-compose-ha.yml}"
 case "$profile:$compose_file" in
-  pinned:deployments/docker-compose-ha.yml|dynamic:deployments/docker-compose-ha-dynamic.yml) ;;
+  pinned:deployments/docker-compose-ha.yml|dynamic:deployments/docker-compose-ha-dynamic.yml|dynamic-ttl-zero:deployments/docker-compose-ha-dns-ttl-zero.yml) ;;
   *) echo "invalid A/B control: $profile:$compose_file" >&2; exit 2 ;;
 esac
 export M3B_HA_COMPOSE_FILE="$compose_file"
@@ -105,6 +105,29 @@ for i in $(seq 1 90); do
   sleep 2
 done
 if (( created != 1 )); then echo "RF3 topic creation timed out" >&2; exit 1; fi
+verify_ttl_policy() {
+  [[ "$compose_file" == deployments/docker-compose-ha-dns-ttl-zero.yml ]] || return 0
+  local node
+  for node in broker1 broker2 broker3; do
+    "${compose[@]}" exec -T "$node" sh -ec '
+      grep -Fxq "networkaddress.cache.ttl=0" /etc/kafka/m3b-dns-ttl-zero.security
+      # Probe the effective security property in a separate JVM in this image.
+      # This is not an inspection of the already-running broker DNS cache.
+      settings=$(java -Djava.security.properties=/etc/kafka/m3b-dns-ttl-zero.security -XshowSettings:security:properties -version 2>&1)
+      printf "%s\n" "$settings" | grep -Eq "^[[:space:]]*networkaddress\.cache\.ttl=0[[:space:]]*$"
+      for f in /proc/[0-9]*/cmdline; do
+        args=$(tr "\000" "\n" < "$f" 2>/dev/null) || continue
+        if printf "%s\n" "$args" | grep -Fxq kafka.Kafka &&
+           printf "%s\n" "$args" | grep -Fxq -- "-Djava.security.properties=/etc/kafka/m3b-dns-ttl-zero.security"; then
+          exit 0
+        fi
+      done
+      exit 1
+    '
+    echo "DNS TTL experiment: broker JVM option and separate JVM effective property verified for $node ($1)"
+  done
+}
+verify_ttl_policy before_fault
 capture before_fault
 python3 - <<'PY'
 import json,os
@@ -128,6 +151,7 @@ go test -count=1 -timeout 9m -v ./internal/kafkaha \
 stop_socket_sampler
 verify_socket_evidence
 python3 scripts/m3b_parallel_proof.py "$M3B_PARALLEL_REPORT_PATH" --head "$M3B_EXACT_HEAD"
+verify_ttl_policy after_recovery
 capture after_success
 audit after_success
 python3 scripts/m3b_network_ab_evidence.py \

@@ -4,6 +4,12 @@ on:
     paths:
       - ".github/workflows/m3b-kraft-network-ab.yml"
       - "deployments/docker-compose-ha-dynamic.yml"
+      - "deployments/docker-compose-ha-dns-ttl-zero.yml"
+      - "deployments/m3b-dns-ttl-zero.security"
+      - "scripts/m3b_dns_ttl_experiment.py"
+      - "scripts/test_m3b_dns_ttl_experiment.py"
+      - "scripts/m3b_trial_summary.py"
+      - "scripts/test_m3b_trial_summary.py"
       - "internal/kafkaha/**"
       - "scripts/m3b-kraft-parallel-smoke.sh"
       - "scripts/m3b_network_ab_evidence.py"
@@ -13,6 +19,8 @@ on:
       - "scripts/m3b_controller_sockets.py"
       - "scripts/m3b_expected_dynamic_failure.py"
       - "scripts/test_m3b_expected_dynamic_failure.py"
+      - "scripts/m3b_dns_ttl_aggregate.py"
+      - "scripts/test_m3b_dns_ttl_aggregate.py"
   workflow_dispatch:
 jobs:
   network-ab:
@@ -20,13 +28,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        profile: [pinned, dynamic]
+        profile: [pinned, dynamic, dynamic-ttl-zero]
         trial: [1, 2, 3]
         include:
           - profile: pinned
+            mode: pinned
             compose: deployments/docker-compose-ha.yml
           - profile: dynamic
+            mode: dynamic
             compose: deployments/docker-compose-ha-dynamic.yml
+          - profile: dynamic-ttl-zero
+            mode: dynamic-ttl-zero
+            compose: deployments/docker-compose-ha-dns-ttl-zero.yml
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -52,15 +65,31 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_m3b_controller_sockets.py' -v
           python3 -m unittest discover -s scripts -p 'test_m3b_kraft_audit.py' -v
           python3 -m unittest discover -s scripts -p 'test_m3b_kraft_diagnostics.py' -v
+          python3 -m unittest discover -s scripts -p 'test_m3b_dns_ttl_experiment.py' -v
+          python3 -m unittest discover -s scripts -p 'test_m3b_trial_summary.py' -v
           python3 -m unittest discover -s scripts -p 'test_m3b_expected_dynamic_failure.py' -v
+          python3 -m unittest discover -s scripts -p 'test_m3b_dns_ttl_aggregate.py' -v
           go test -count=1 ./internal/kafkaha
       - name: Real parallel two-controller Kafka fault under selected network
         env:
-          M3B_NETWORK_AB_MODE: ${{ matrix.profile }}
+          M3B_NETWORK_AB_MODE: ${{ matrix.mode }}
           M3B_HA_COMPOSE_FILE: ${{ matrix.compose }}
           M3B_KRAFT_DIAGNOSTICS_DIR: /tmp/m3b-parallel-kraft-diagnostics
           M3B_PARALLEL_REPORT_PATH: /tmp/m3b-parallel-restart-report.json
         run: bash scripts/m3b-kraft-parallel-smoke.sh
+      - name: Require qualifying reassignment and recovery in TTL treatment
+        if: matrix.profile == 'dynamic-ttl-zero'
+        shell: bash
+        run: |
+          set +e
+          python3 scripts/m3b_dns_ttl_experiment.py --head "$(git rev-parse HEAD)" --report /tmp/m3b-parallel-kraft-diagnostics/network-ab-comparison.json
+          status=$?
+          set -e
+          if [[ "$status" -eq 3 ]]; then
+            echo "::notice::UNEXPOSED_INCONCLUSIVE; this trial is not counted as mitigation evidence"
+          elif [[ "$status" -ne 0 ]]; then
+            exit "$status"
+          fi
       - name: Preserve true Kafka ACK/ISR recovery or INCOMPLETE receipt
         if: always()
         uses: actions/upload-artifact@v4
@@ -83,5 +112,28 @@ jobs:
         with:
           name: m3b-network-ab-sockets-${{ matrix.profile }}-trial-${{ matrix.trial }}
           path: /tmp/m3b-parallel-kraft-diagnostics/controller-peers.jsonl
+          if-no-files-found: warn
+          retention-days: 14
+  ttl-exposure-aggregate:
+    if: always()
+    needs: network-ab
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: m3b-network-ab-identity-dynamic-ttl-zero-trial-*
+          path: /tmp/m3b-ttl-trials
+          merge-multiple: false
+      - name: Require two independently exposed TTL recovery trials
+        run: python3 scripts/m3b_dns_ttl_aggregate.py --head "$(git rev-parse HEAD)" --directory /tmp/m3b-ttl-trials --expected-trials 3 --minimum-exposed 2 --out /tmp/m3b-ttl-aggregate.json
+      - name: Preserve TTL exposure aggregate
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m3b-dns-ttl-exposure-aggregate
+          path: /tmp/m3b-ttl-aggregate.json
           if-no-files-found: warn
           retention-days: 14

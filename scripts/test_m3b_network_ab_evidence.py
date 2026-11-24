@@ -70,6 +70,13 @@ class NetworkABContract(unittest.TestCase):
             with self.subTest(verdict=verdict):
                 self.assertEqual(evidence.observe('dynamic',HEAD,a,sockets(),before,snapshot)['cross_target_voter_request_count'],count)
 
+    def test_ttl_profile_is_distinct_from_untreated_control(self):
+        same=nodes(["172.22.0.11","172.22.0.12","172.22.0.13"])
+        result=evidence.assess("dynamic-ttl-zero",HEAD,receipt(),audit(),sockets(),same,same)
+        self.assertEqual(result["profile"],"dynamic-ttl-zero")
+        self.assertEqual(result["endpoint_exposure"],"NO_ADDRESS_CHANGE_OBSERVED")
+        self.assertFalse(result["causal_root_cause_proven"])
+
     def test_fixed_profile_requires_zero_drift(self):
         result=evidence.assess("pinned",HEAD,receipt(),audit(),sockets(),nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]),nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]))
         self.assertEqual(result["result"],"RECOVERY_VERIFIED_ENDPOINTS_FIXED")

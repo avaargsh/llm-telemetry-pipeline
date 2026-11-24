@@ -63,6 +63,14 @@ or root-cause proof. Any failure without the exact address-reassignment,
 cross-target VOTE, no-unsafe-ACK, and complete identity/socket evidence remains
 a failed CI job.
 
+## DNS TTL treatment evidence threshold
+
+An individual TTL trial with no actual address reassignment is classified
+`UNEXPOSED_INCONCLUSIVE` and is not counted as a successful treatment sample.
+The aggregate gate requires at least two of three independent trials to show
+real two-voter reassignment, 35/35 ACK readback, ISR recovery, and zero
+cross-target VOTE requests. Unexposed trials never count toward the threshold.
+
 ## Investigation: intermittent post-quorum-loss voter mismatch (Issue #28)
 
 The historic successes above are real but do **not** imply every subsequent
@@ -449,4 +457,15 @@ verified. No production IPAM, HA SLO or Apache Kafka defect claims.
 
 ## Repeated network-control exposure evidence
 
-The network A/B workflow runs three independent jobs per profile (six total), with trial-specific artifacts. The comparator reports `endpoint_exposure` independently of verified recovery: `PINNED_CONTROL`, `NO_ADDRESS_CHANGE_OBSERVED`, `ADDRESS_CHANGE_WITHOUT_REASSIGNMENT`, or `ADDRESS_REASSIGNMENT_OBSERVED`. The last category requires a previously owned IPv4 address to be observed under another broker after recovery. Before/after snapshots cannot establish when a transient address changed or prove JVM cache causality. No observed change is an unexposed trial, not a falsification of the endpoint-reassignment hypothesis. All existing RF3/ISR3, no-ACK and sealed-event readback gates remain mandatory. Missing or malformed drift observations fail closed. This is a bounded observational repeat, not a forced IP reassignment experiment or a production SLO. Issue #28 remains open.
+The network A/B workflow runs three independent jobs per profile (six total), with trial-specific artifacts. The comparator reports `endpoint_exposure` independently of verified recovery: `PINNED_CONTROL`, `NO_ADDRESS_CHANGE_OBSERVED`, `ADDRESS_CHANGE_WITHOUT_REASSIGNMENT`, or `ADDRESS_REASSIGNMENT_OBSERVED`. The last category requires a previously owned IPv4 address to be observed under another broker after recovery. Before/after snapshots cannot establish when a transient address changed or prove JVM cache causality. No observed change is an unexposed trial, not a falsification of the endpoint-reassignment hypothesis. All existing RF3/ISR3, no-ACK and sealed-event readback gates remain mandatory. Missing or malformed drift observations fail closed. This was a bounded observational repeat, not a forced IP reassignment experiment. PR #48 adds deterministic endpoint churn for the dynamic and TTL-zero profiles, described below. Issue #28 remains open.
+
+
+## Experimental positive DNS cache TTL treatment (not production)
+
+The stacked experimental profile `deployments/docker-compose-ha-dns-ttl-zero.yml` changes only positive Java DNS caching policy relative to the dynamic-address control, besides the isolated Compose project and mounted policy file. Before the fault and after verified recovery, each broker must have the startup option and its mounted policy present; a separate JVM in the same container must report `networkaddress.cache.ttl=0` through `-XshowSettings:security:properties`. This checks policy loading in the image and startup configuration, **not** the internal cache state of the live broker JVM.
+
+Both the untreated `dynamic` control and `dynamic-ttl-zero` treatment share a deterministic cross-owner IPv4 swap harness. After both non-leader brokers stop and the no-ACK probe is recorded, the same stopped containers are detached and connected to the same isolated bridge with each other's original IPv4 and their own service aliases. Both are started by one Compose command; the actual swapped addresses and aliases must be verified before quorum checks. A user-configured subnet permits explicit IP allocation; no broker has a fixed initial IP. Containers and named volumes are not recreated. The pinned control is unchanged.
+
+An inability to detach, swap, or verify both endpoints fails the experiment. Fresh addresses, unchanged addresses, and partial swaps are not qualifying exposure. Before/after diagnostics independently confirm cross-owner reassignment. This does not inspect the live JVM DNS cache or prove root cause.
+
+The TTL verdict requires a comparison receipt explicitly labeled `dynamic-ttl-zero`, not an untreated `dynamic` control from the same commit. The smoke script pairs the treatment label exclusively with the TTL-zero Compose file and verifies policy before fault and after recovery before issuing a successful comparison. This label is not a cryptographic attestation or proof of live JVM cache state. The TTL verdict requires the normal recovery receipt, 35 ACKed identities, zero observed wrong-target votes, and a structurally consistent IPv4 reassignment record. Unexposed recovery is inconclusive. This does not prove root cause, production recovery, or a permanent mitigation. Preserve the original untreated RED trials; never suppress their failure. All new experiments require hosted exact-head verification.
