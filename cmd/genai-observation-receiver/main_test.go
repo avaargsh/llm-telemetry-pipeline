@@ -135,3 +135,18 @@ func TestLoadCredentialsRejectsWorldReadableSecret(t *testing.T) {
 		t.Fatalf("world-readable credential file accepted: credentials=%v err=%v", credentials, err)
 	}
 }
+
+func TestLoadCredentialsRejectsNoncanonicalJSONKeys(t *testing.T) {
+	for name, body := range map[string]string{
+		"token case collision": `[{"token":"` + receiverTestToken + `","TOKEN":"` + receiverTestToken + `","tenant_id":"tenant-a"}]`,
+		"tenant case collision": `[{"token":"` + receiverTestToken + `","tenant_id":"tenant-a","TENANT_ID":"tenant-b"}]`,
+		"single uppercase alias": `[{"TOKEN":"` + receiverTestToken + `","tenant_id":"tenant-a"}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			credentials, err := loadCredentials(writeCredentials(t, body))
+			if err == nil || len(credentials) != 0 {
+				t.Fatal("noncanonical credential JSON key accepted")
+			}
+		})
+	}
+}

@@ -72,6 +72,11 @@ func rejectDuplicateJSONKeys(raw []byte) error {
 				if !ok {
 					return errors.New("invalid JSON object key")
 				}
+				// encoding/json also matches struct keys case-insensitively.
+				// Require canonical names before decoding into the credential struct.
+				if key != "token" && key != "tenant_id" {
+					return errors.New("invalid credential JSON object key")
+				}
 				if _, exists := seen[key]; exists {
 					return errors.New("duplicate JSON object key")
 				}
