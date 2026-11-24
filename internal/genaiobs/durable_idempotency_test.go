@@ -158,11 +158,11 @@ func TestDurableStoreDeliveryReceiptTenantIsolationExpiryAndCapacity(t *testing.
 	// Expire both natural and delivery receipts to model a replay after the
 	// configured retention window. The next admission may create a new row.
 	if _, err := db.ExecContext(ctx, `UPDATE public.genai_observation_delivery_receipts
-SET expires_at=now()-interval '1 second' WHERE tenant_id=$1 AND idempotency_key=$2`, tenantA, key); err != nil {
+SET accepted_at=now()-interval '31 days', expires_at=now()-interval '1 second' WHERE tenant_id=$1 AND idempotency_key=$2`, tenantA, key); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecContext(ctx, `UPDATE public.genai_observation_receipts
-SET expires_at=now()-interval '1 second'
+SET accepted_at=now()-interval '2 days', expires_at=now()-interval '1 second'
 WHERE tenant_id=$1 AND trace_id=$2 AND span_id=$3`,
 		tenantA, observationA.TraceID, observationA.SpanID); err != nil {
 		t.Fatal(err)
