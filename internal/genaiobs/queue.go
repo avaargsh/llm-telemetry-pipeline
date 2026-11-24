@@ -41,6 +41,12 @@ func (q *Queue) Submit(scope Scope, version string, span Span) error {
 	if q.size == len(q.slots) {
 		return ErrQueueFull
 	}
+	q.appendLocked(o)
+	return nil
+}
+
+// appendLocked requires q.mu and available capacity.
+func (q *Queue) appendLocked(o Observation) {
 	// A short string can alias a large input buffer. Copy the retained fields
 	// so the bounded projection cannot pin the caller's raw payload in memory.
 	for _, s := range []*string{&o.TenantID, &o.TraceID, &o.SpanID, &o.RequestID, &o.AttemptID, &o.Provider, &o.Operation, &o.RequestModel, &o.ResponseModel, &o.Status} {
@@ -48,7 +54,6 @@ func (q *Queue) Submit(scope Scope, version string, span Span) error {
 	}
 	q.slots[(q.head+q.size)%len(q.slots)] = o
 	q.size++
-	return nil
 }
 
 // Pop transfers ownership to the caller. Empty returns false. It is not a
