@@ -76,11 +76,14 @@ def observe(profile, head, audit, sockets, before, after):
                and not changed and not mismatches,
                "pinned voter endpoint / VOTE identity unstable")
     else:
-        ensure(audit.get("verdict") in {
-            "NO_MISMATCH_OBSERVED",
-            "CONTAINER_ENDPOINT_DRIFT_OBSERVED",
-            "VOTER_TARGET_ID_MISMATCH_OBSERVED",
-        }, "dynamic experiment has unclassified unsafe evidence")
+        # Match the audit producer's precedence: wrong-target votes, then
+        # endpoint drift, then no mismatch. A contradictory summary cannot
+        # serve as zero-vote evidence for the DNS TTL treatment.
+        expected_verdict = ("VOTER_TARGET_ID_MISMATCH_OBSERVED" if mismatches
+                            else "CONTAINER_ENDPOINT_DRIFT_OBSERVED" if changed
+                            else "NO_MISMATCH_OBSERVED")
+        ensure(audit.get("verdict")==expected_verdict,
+               "audit verdict contradicts observed endpoint or VOTE details")
     reassigned=[
         {"ipv4": ip, "before_owner": prior, "after_owner": current}
         for prior,ip in before_ips.items()

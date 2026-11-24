@@ -34,6 +34,34 @@ def nodes(ips):
     return {"nodes": {f"broker{i}":{"container_ipv4":ip} for i,ip in enumerate(ips,1)}}
 
 class NetworkABContract(unittest.TestCase):
+    def test_dynamic_verdict_must_match_details(self):
+        before=nodes(['172.22.0.11','172.22.0.12','172.22.0.13'])
+        after=nodes(['172.22.0.11','172.22.0.13','172.22.0.12'])
+        mismatch={'sender_id':1,'receiver_id':2,'target_id':3,'count':7}
+        for verdict, rows, changed, snapshot in (
+            ('VOTER_TARGET_ID_MISMATCH_OBSERVED', [], ['broker2','broker3'], after),
+            ('NO_MISMATCH_OBSERVED', [mismatch], [], before),
+            ('NO_MISMATCH_OBSERVED', [], ['broker2','broker3'], after),
+            ('CONTAINER_ENDPOINT_DRIFT_OBSERVED', [], [], before),
+            ('CONTAINER_ENDPOINT_DRIFT_OBSERVED', [mismatch], ['broker2','broker3'], after),
+        ):
+            a=audit(); a.update(verdict=verdict, observed_voter_target_mismatches=rows, ip_changed_nodes=changed)
+            with self.subTest(verdict=verdict,rows=rows,changed=changed), self.assertRaises(ValueError):
+                evidence.observe('dynamic',HEAD,a,sockets(),before,snapshot)
+
+    def test_dynamic_valid_verdicts(self):
+        before=nodes(['172.22.0.11','172.22.0.12','172.22.0.13'])
+        after=nodes(['172.22.0.11','172.22.0.13','172.22.0.12'])
+        mismatch={'sender_id':1,'receiver_id':2,'target_id':3,'count':7}
+        for verdict,rows,changed,snapshot,count in (
+            ('NO_MISMATCH_OBSERVED',[],[],before,0),
+            ('CONTAINER_ENDPOINT_DRIFT_OBSERVED',[],['broker2','broker3'],after,0),
+            ('VOTER_TARGET_ID_MISMATCH_OBSERVED',[mismatch],['broker2','broker3'],after,7),
+        ):
+            a=audit();a.update(verdict=verdict,observed_voter_target_mismatches=rows,ip_changed_nodes=changed)
+            with self.subTest(verdict=verdict):
+                self.assertEqual(evidence.observe('dynamic',HEAD,a,sockets(),before,snapshot)['cross_target_voter_request_count'],count)
+
     def test_fixed_profile_requires_zero_drift(self):
         result=evidence.assess("pinned",HEAD,receipt(),audit(),sockets(),nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]),nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]))
         self.assertEqual(result["result"],"RECOVERY_VERIFIED_ENDPOINTS_FIXED")
