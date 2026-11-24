@@ -32,3 +32,86 @@ groups:
           severity: critical
         annotations:
           summary: "Kafka group committed offset is before broker log start; data gap possible"
+
+  - name: llm-telemetry-genai-observation
+    interval: 15s
+    rules:
+      - alert: GenAIObservationQueueBacklogWarning
+        expr: (llm_telemetry_genai_worker_queue_pending_depth / clamp_min(llm_telemetry_genai_worker_queue_capacity, 1)) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GenAI observation queue is above 50% of configured capacity"
+          description: "Inspect receiver admission, sender retries and worker health before the queue approaches its hard limit."
+      - alert: GenAIObservationQueueBacklogCritical
+        expr: (llm_telemetry_genai_worker_queue_pending_depth / clamp_min(llm_telemetry_genai_worker_queue_capacity, 1)) > 0.8
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GenAI observation queue is above 80% of configured capacity"
+          description: "Queue admission may soon fail closed. Restore delivery capacity and inspect the oldest pending age."
+      - alert: GenAIObservationOldestPendingWarning
+        expr: llm_telemetry_genai_worker_oldest_pending_age_seconds > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Oldest GenAI observation has been pending for more than five minutes"
+      - alert: GenAIObservationOldestPendingCritical
+        expr: llm_telemetry_genai_worker_oldest_pending_age_seconds > 900
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Oldest GenAI observation has been pending for more than fifteen minutes"
+      - alert: GenAIObservationTerminalRowsWarning
+        expr: llm_telemetry_genai_worker_queue_terminal_depth > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GenAI observation queue contains terminal rows requiring operator action"
+      - alert: GenAIObservationTerminalRowsCritical
+        expr: llm_telemetry_genai_worker_queue_terminal_depth > 10
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GenAI observation terminal queue has accumulated more than ten rows"
+      - alert: GenAIObservationWorkerDeliveryStalled
+        expr: llm_telemetry_genai_worker_queue_pending_depth > 0 and (time() - llm_telemetry_genai_worker_last_successful_delivery_timestamp_seconds) > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GenAI observation worker has pending rows but no recent successful delivery"
+      - alert: GenAIObservationRetryRatioWarning
+        expr: (rate(llm_telemetry_genai_worker_retryable_total[5m]) / clamp_min(rate(llm_telemetry_genai_worker_acknowledged_total[5m]) + rate(llm_telemetry_genai_worker_retryable_total[5m]) + rate(llm_telemetry_genai_worker_terminal_total[5m]), 1e-9)) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GenAI observation delivery retry ratio is above 10%"
+      - alert: GenAIObservationRetryRatioCritical
+        expr: (rate(llm_telemetry_genai_worker_retryable_total[5m]) / clamp_min(rate(llm_telemetry_genai_worker_acknowledged_total[5m]) + rate(llm_telemetry_genai_worker_retryable_total[5m]) + rate(llm_telemetry_genai_worker_terminal_total[5m]), 1e-9)) > 0.25
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GenAI observation delivery retry ratio is above 25%"
+      - alert: GenAIObservationReceiverFailuresWarning
+        expr: (rate(llm_telemetry_genai_receiver_admission_failed_total[5m]) / clamp_min(rate(llm_telemetry_genai_receiver_admission_requests_total[5m]), 1e-9)) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GenAI observation receiver 5xx rate is above 5%"
+      - alert: GenAIObservationReceiverFailuresCritical
+        expr: (rate(llm_telemetry_genai_receiver_admission_failed_total[5m]) / clamp_min(rate(llm_telemetry_genai_receiver_admission_requests_total[5m]), 1e-9)) > 0.2
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "GenAI observation receiver 5xx rate is above 20%"

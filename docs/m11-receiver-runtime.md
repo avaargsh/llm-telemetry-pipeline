@@ -118,9 +118,15 @@ Worker metrics include export latency count/sum, pending/terminal depth,
 configured capacity, oldest pending age and last successful delivery timestamp.
 All metric dimensions are bounded; no tenant or request identifiers are labels.
 
-Start with warning/critical thresholds derived from observed queue growth,
-oldest pending age and retry/failure rates. Do not publish production SLOs
-until sustained representative measurements exist.
+Initial operational guardrails are included in
+`deployments/prometheus/alert-rules.yml`: queue occupancy above 50%/80%,
+oldest pending age above 5/15 minutes, terminal rows, stalled successful
+delivery, retry ratio above 10%/25%, and receiver 5xx ratio above 5%/20%.
+These are starting Warning/Critical thresholds for validation, not production
+SLOs; tune them only after collecting representative load and recovery data.
+The local Prometheus profile scrapes the worker when its Compose overlay is
+running. In Kubernetes, the receiver pod exposes standard Prometheus scrape
+annotations; ensure the cluster Prometheus discovery policy honors them.
 
 ## Verification
 

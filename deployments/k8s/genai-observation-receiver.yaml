@@ -13,6 +13,11 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: genai-observation-receiver
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /metrics
+        prometheus.io/port: "4318"
+        prometheus.io/scheme: https
     spec:
       automountServiceAccountToken: false
       securityContext:
