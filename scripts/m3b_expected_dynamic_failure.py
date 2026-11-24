@@ -8,6 +8,12 @@ def verify(head, report, comparison, audit, sockets, before, after):
     if any(not isinstance(d,dict) or d.get("exact_head")!=head for d in docs): raise ValueError("evidence is not bound to exact HEAD")
     if report.get("scenario")!="two_voter_parallel_restart" or report.get("result")!="INCOMPLETE": raise ValueError("not an incomplete recovery receipt")
     if report.get("initial_isr")!=3 or report.get("acknowledged_ids")!=35 or report.get("no_ack_during_quorum_loss") is not True: raise ValueError("initial ISR/ACK safety evidence incomplete")
+    if (report.get("single_compose_restart_request") is not True or report.get("quorum_status_observed") is not True
+            or report.get("failure_reason")!="ISR3_RECOVERY_TIMEOUT"
+            or type(report.get("last_observed_replication_factor")) is not int or report["last_observed_replication_factor"]!=3
+            or type(report.get("last_observed_isr")) is not int or report["last_observed_isr"] not in (1,2)
+            or "recovered_isr" in report or report.get("all_acknowledged_verified") is True):
+        raise ValueError("actual post-quorum ISR3 recovery timeout not proven")
     if comparison.get("profile")!="dynamic" or comparison.get("result")!="FAILED_RUN_RECOVERY_UNVERIFIED": raise ValueError("not the expected untreated dynamic failure")
     if comparison.get("endpoint_exposure")!="ADDRESS_REASSIGNMENT_OBSERVED" or comparison.get("acknowledged_readback_verified") is not False or comparison.get("causal_root_cause_proven") is not False: raise ValueError("invalid failure/exposure classification")
     changed=comparison.get("ip_changed_nodes"); rows=comparison.get("reassigned_addresses")
