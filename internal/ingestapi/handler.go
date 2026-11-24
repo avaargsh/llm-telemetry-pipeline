@@ -181,41 +181,47 @@ func (h *handler) ingest(w http.ResponseWriter, r *http.Request) {
 }
 
 
-// rejectAmbiguousMembers checks the original object, before ledger writes.
-// encoding/json otherwise accepts duplicate members and case-folded aliases.
-// Values are already type-checked by the strict UsageEvent decoder above.
+// rejectAmbiguousMembers requires every canonical v1 member exactly once.
+// In particular, encoding/json otherwise accepts null or absent scalar fields
+// as zero values and case-folded aliases. Typed decoding and the existing
+// UsageEvent digest remain independent checks.
 func rejectAmbiguousMembers(raw []byte) error {
-   d := json.NewDecoder(bytes.NewReader(raw))
-   start, err := d.Token()
-   if err != nil || start != json.Delim('{') {
-       return errors.New("usage event must be a JSON object")
-   }
-   seen := make([]string, 0, 16)
-   for d.More() {
-       token, err := d.Token()
-       if err != nil {
-           return err
-       }
-       key, ok := token.(string)
-       if !ok {
-           return errors.New("invalid JSON object member")
-       }
-       for _, prior := range seen {
-           if strings.EqualFold(prior, key) {
-               return errors.New("ambiguous JSON object member")
-           }
-       }
-       seen = append(seen, key)
-       var value json.RawMessage
-       if err := d.Decode(&value); err != nil {
-           return err
-       }
-   }
-   end, err := d.Token()
-   if err != nil || end != json.Delim('}') {
-       return errors.New("incomplete JSON object")
-   }
-   return nil
+    d := json.NewDecoder(bytes.NewReader(raw))
+    start, err := d.Token()
+    if err != nil || start != json.Delim('{') {
+        return errors.New("usage event must be a JSON object")
+    }
+    remaining := map[string]bool{
+        "event_id": true, "event_type": true, "schema_version": true, "tenant_id": true,
+        "project_id": true, "request_id": true, "model": true, "prompt_tokens": true,
+        "completion_tokens": true, "latency_ms": true, "status": true, "timestamp": true, "payload_hash": true,
+    }
+    for d.More() {
+        token, err := d.Token()
+        if err != nil {
+            return err
+        }
+        key, ok := token.(string)
+        if !ok || !remaining[key] {
+            return errors.New("unknown, noncanonical or duplicate JSON member")
+        }
+        delete(remaining, key)
+        var value json.RawMessage
+        if err := d.Decode(&value); err != nil {
+            return err
+        }
+        if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+            return errors.New("null usage event member")
+        }
+    }
+    end, err := d.Token()
+    if err != nil || end != json.Delim('}') {
+        return errors.New("incomplete JSON object")
+    }
+    if len(remaining) != 0 {
+        return errors.New("missing required usage event member")
+    }
+    return nil
 }
 
 func writeDecodeError(w http.ResponseWriter, err error) {
