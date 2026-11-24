@@ -134,8 +134,9 @@ class KafkaVersionMatrixTests(unittest.TestCase):
             for version in matrix.VERSIONS:
                 for trial in (1, 2, 3):
                     artifact = root / f"m3b-kafka-version-{version}-trial-{trial}"
-                    artifact.mkdir()
-                    (artifact / "network-ab-comparison.json").write_text(
+                    diagnostics = artifact / "m3b-parallel-kraft-diagnostics"
+                    diagnostics.mkdir(parents=True)
+                    (diagnostics / "network-ab-comparison.json").write_text(
                         json.dumps(report(version)), encoding="utf-8"
                     )
             loaded = matrix.load_trial_receipts(root)
