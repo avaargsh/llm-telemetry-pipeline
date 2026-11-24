@@ -108,6 +108,10 @@ func TestDurableStoreRetryTerminalAndExplicitOperatorActions(t *testing.T) {
 	dropped,err:=store.DropFailed(ctx,third[0].ID);if err!=nil||dropped.TenantID!=tenant { t.Fatalf("explicit drop: %+v %v",dropped,err) }
 	if _,err:=store.DropFailed(ctx,third[0].ID);!errors.Is(err,ErrNoFailedObservation) { t.Fatalf("second drop: %v",err) }
 	if n,err:=store.Len(ctx);err!=nil||n!=0 { t.Fatalf("terminal drop len=%d err=%v",n,err) }
+	var queueItems int64
+	if err:=store.DB.QueryRowContext(ctx,"SELECT queue_items FROM genai_observation_queue_state WHERE singleton=true").Scan(&queueItems);err!=nil||queueItems!=0 {
+		t.Fatalf("terminal drop counter=%d err=%v",queueItems,err)
+	}
 	if err:=store.Enqueue(ctx,o);err!=nil { t.Fatal(err) }
 	if n,err:=store.Len(ctx);err!=nil||n!=0 { t.Fatalf("dropped receipt did not deduplicate replay: %d %v",n,err) }
 }
@@ -269,4 +273,14 @@ func TestDurableWorkerReleasesLeaseWhenExportContextIsCanceled(t *testing.T) {
 		t.Fatalf("delivered=%v err=%v",delivered,err)
 	}
 	if !repo.released||repo.acked||repo.retried { t.Fatalf("canceled export lease not released: %+v",repo) }
+}
+
+func TestDurableStoreCapacityConfigurationMustMatchAcrossWriters(t *testing.T) {
+	store,db:=openDurableTestStore(t,2)
+	tenant:=fmt.Sprintf("durable-test-%d",time.Now().UnixNano())
+	if err:=store.Enqueue(context.Background(),durableTestObservation(tenant,"b123456789abcdef0123456789abcdef",81));err!=nil { t.Fatal(err) }
+	other,err:=NewDurableStore(db,3);if err!=nil { t.Fatal(err) }
+	if err:=other.Enqueue(context.Background(),durableTestObservation(tenant,"c123456789abcdef0123456789abcdef",82));!errors.Is(err,ErrInvalidDurableConfig) {
+		t.Fatalf("mismatched replica capacity was accepted: %v",err)
+	}
 }
