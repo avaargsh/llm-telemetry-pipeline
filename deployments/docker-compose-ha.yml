@@ -31,7 +31,7 @@ services:
       - broker2_data:/b2
       - broker3_data:/b3
   broker1:
-    image: apache/kafka:4.1.0
+    image: apache/kafka:4.1.0@sha256:bff074a5d0051dbc0bbbcd25b045bb1fe84833ec0d3c7c965d1797dd289ec88f
     hostname: broker1
     networks:
       kraft-stable:
@@ -48,7 +48,7 @@ services:
     volumes:
       - broker1_data:/tmp/kraft-combined-logs
   broker2:
-    image: apache/kafka:4.1.0
+    image: apache/kafka:4.1.0@sha256:bff074a5d0051dbc0bbbcd25b045bb1fe84833ec0d3c7c965d1797dd289ec88f
     hostname: broker2
     networks:
       kraft-stable:
@@ -65,7 +65,7 @@ services:
     volumes:
       - broker2_data:/tmp/kraft-combined-logs
   broker3:
-    image: apache/kafka:4.1.0
+    image: apache/kafka:4.1.0@sha256:bff074a5d0051dbc0bbbcd25b045bb1fe84833ec0d3c7c965d1797dd289ec88f
     hostname: broker3
     networks:
       kraft-stable:
