@@ -133,7 +133,6 @@ func TestDurableStoreDirectReceiptExpiryUpdatesCounters(t *testing.T) {
 	if err := store.Ack(ctx, deliveries[0], "direct-expiry-compat-worker"); err != nil {
 		t.Fatal(err)
 	}
-	expireFixture()
 	var beforeNatural, beforeDelivery int64
 	if err := db.QueryRowContext(ctx, "SELECT receipt_items, delivery_receipt_items FROM public.genai_observation_queue_state WHERE singleton=true").Scan(&beforeNatural, &beforeDelivery); err != nil {
 		t.Fatal(err)
