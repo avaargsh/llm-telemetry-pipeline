@@ -39,7 +39,7 @@ jobs:
       - name: Transactional PostgreSQL integration tests
         env:
           TEST_POSTGRES_DSN: postgres://telemetry:localdev-only@localhost:15432/telemetry?sslmode=disable
-        run: go test -count=1 -v ./internal/ledger ./internal/outbox ./internal/genaiobs
+        run: go test -p 1 -count=1 -v ./internal/ledger ./internal/outbox ./internal/genaiobs
       - name: Stop isolated test environment
         if: always()
         run: docker compose -f deployments/docker-compose.yml down -v

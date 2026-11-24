@@ -154,6 +154,9 @@ FROM public.genai_observation_queue_state WHERE singleton=true FOR UPDATE`).Scan
 	if err=tx.QueryRowContext(ctx,"SELECT expired_receipts,expired_delivery_receipts FROM public.expire_genai_observation_receipts()").Scan(&expired,&expiredDelivery);err!=nil {
 		return fmt.Errorf("expire observation receipts through restricted database function: %w",err)
 	}
+	// Migration 005 updates persisted counters inside the SQL function. Keep the local
+	// subtraction because this writer later writes absolute post-expiry totals from
+	// its pre-expiry snapshot; this remains compatible with older application binaries.
 	receiptCount-=expired
 	if receiptCount<0 { return errors.New("durable observation receipt counter is inconsistent") }
 	deliveryReceiptCount-=expiredDelivery

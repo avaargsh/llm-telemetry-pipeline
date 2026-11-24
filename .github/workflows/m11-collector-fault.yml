@@ -85,7 +85,9 @@ jobs:
                     AND column_name='delivery_receipt_items')
                 AND to_regrole('llm_telemetry_observation_receiver') IS NOT NULL
                 AND to_regrole('llm_telemetry_observation_worker') IS NOT NULL
-                AND to_regprocedure('public.ensure_genai_observation_capacity(bigint)') IS NOT NULL" \
+                AND to_regprocedure('public.ensure_genai_observation_capacity(bigint)') IS NOT NULL
+                AND position('FOR UPDATE' IN pg_get_functiondef(to_regprocedure('public.expire_genai_observation_receipts()'))) > 0
+                AND position('receipt_items = current_receipt_items - expired_receipts' IN pg_get_functiondef(to_regprocedure('public.expire_genai_observation_receipts()'))) > 0" \
               | grep -q t; then
               exit 0
             fi
@@ -99,6 +101,9 @@ jobs:
           for migration in migrations/postgres/*.sql; do
             docker compose -f deployments/docker-compose.yml exec -T postgres psql -v ON_ERROR_STOP=1 -U telemetry -d receiver_telemetry < "$migration"
           done
+          docker compose -f deployments/docker-compose.yml exec -T postgres psql -U telemetry -d receiver_telemetry -tAc \
+            "SELECT position('FOR UPDATE' IN pg_get_functiondef(to_regprocedure('public.expire_genai_observation_receipts()'))) > 0
+              AND position('receipt_items = current_receipt_items - expired_receipts' IN pg_get_functiondef(to_regprocedure('public.expire_genai_observation_receipts()'))) > 0" | grep -q t
       - name: Start pinned OpenTelemetry Collector contrib
         run: |
           docker run --detach --name m11-otel-collector --network host \
@@ -126,6 +131,10 @@ jobs:
         env:
           TEST_POSTGRES_DSN: postgres://telemetry:localdev-only@localhost:15432/telemetry?sslmode=disable
         run: go test -race -count=1 -v -run '^TestDurableStore(IdempotencyKeyReceiptSemantics|DeliveryReceiptTenantIsolationExpiryAndCapacity|RejectsInvalidIdempotencyKeys)$' ./internal/genaiobs
+      - name: Atomic receipt expiry counters, rollback, underflow and concurrent admission (M11.8)
+        env:
+          TEST_POSTGRES_DSN: postgres://telemetry:localdev-only@localhost:15432/telemetry?sslmode=disable
+        run: go test -race -count=1 -v -run '^TestDurableStore(DirectReceiptExpiryUpdatesCounters|ReceiptExpiryFailsClosedOnCounterUnderflow|ReceiptExpirySerializesWithAdmission)$' ./internal/genaiobs
       - name: Durable HTTP exporter → receiver ACK-loss and worker-replacement test
         env:
           TEST_POSTGRES_DSN: postgres://telemetry:localdev-only@localhost:15432/telemetry?sslmode=disable
