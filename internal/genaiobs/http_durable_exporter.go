@@ -23,6 +23,8 @@ type otlpJSONExportAttribute struct {
 type otlpJSONExportSpan struct {
 	TraceID string `json:"traceId"`
 	SpanID string `json:"spanId"`
+	Name string `json:"name"`
+	Kind int `json:"kind"`
 	Status struct {
 		Code int `json:"code"`
 	} `json:"status"`
@@ -138,7 +140,7 @@ func encodeOTLPJSONObservation(o Observation)([]byte,error) {
 	if err:=validateObservation(o);err!=nil {
 		return nil,err
 	}
-	span:=otlpJSONExportSpan{TraceID:o.TraceID,SpanID:o.SpanID}
+	span:=otlpJSONExportSpan{TraceID:o.TraceID,SpanID:o.SpanID,Name:"gen_ai."+o.Operation,Kind:1}
 	switch o.Status {
 	case "unset":
 		span.Status.Code=0

@@ -48,6 +48,10 @@ func (m *workerMetrics) handler(db *sql.DB) http.Handler {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), time.Second)
 		defer cancel()
+		if db == nil {
+			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
+			return
+		}
 		if err := db.PingContext(ctx); err != nil {
 			http.Error(w, "database unavailable", http.StatusServiceUnavailable)
 			return
@@ -148,6 +152,9 @@ func defaultWorkerID() string {
 		}
 		return '-'
 	}, host)
+	if len(host) > 80 {
+		host = host[:80]
+	}
 	return fmt.Sprintf("genaiobs-worker/%s/%d", host, os.Getpid())
 }
 
@@ -251,7 +258,9 @@ func run() error {
 	metrics := &workerMetrics{}
 	server := &http.Server{
 		Addr: metricsAddr, Handler: metrics.handler(db),
-		ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second,
+		ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second,
+		WriteTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second,
+		MaxHeaderBytes: 8 << 10,
 	}
 	serverErrors := make(chan error, 1)
 	go func() {

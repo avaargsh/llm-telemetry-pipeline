@@ -68,6 +68,9 @@ func TestHTTPDurableExporterSendsOTLPAndStableIdempotencyKey(t *testing.T) {
 	if strings.Contains(string(gotBody), want.TenantID) || strings.Contains(string(gotBody), "prompt") || strings.Contains(string(gotBody), "completion") {
 		t.Fatalf("exported OTLP payload contains tenant scope or raw content: %s", gotBody)
 	}
+	if !strings.Contains(string(gotBody), `"name":"gen_ai.chat"`) || !strings.Contains(string(gotBody), `"kind":1`) {
+		t.Fatalf("exported OTLP span is missing its semantic name or internal kind: %s", gotBody)
+	}
 	spans, err := DecodeOTLPJSON(gotBody)
 	if err != nil || len(spans) != 1 {
 		t.Fatalf("decode exported OTLP payload: spans=%d err=%v", len(spans), err)

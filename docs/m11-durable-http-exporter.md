@@ -41,6 +41,8 @@ Optional bounded tuning:
 
 The worker exposes `/healthz`, `/readyz` and `/metrics`. Metrics have fixed names and no tenant, model, trace, request or attempt labels: ACKs, retryable outcomes, terminal outcomes, operational errors, idle polls and queue length. The Compose overlay publishes metrics only on host loopback, runs as non-root, read-only, drops Linux capabilities and requires secrets through environment substitution. It is a conservative local deployment template, not a production HA/SLO claim.
 
+Copy `deployments/genai-observation-worker.env.example`, replace the receiver URL/token and database DSN, then export the variables before starting the worker.
+
 Start it with the base PostgreSQL Compose plus the worker overlay:
 
 ```sh
@@ -54,7 +56,7 @@ Do not commit `.env` files or receiver credentials. The local PostgreSQL passwor
 
 ## Migration and verification
 
-Apply `migrations/postgres/003_genai_observation_delivery_receipts.sql` before enabling keyed receiver admission on an existing database. Fresh disposable Compose databases apply it automatically from the migration mount.
+Apply `migrations/postgres/003_genai_observation_delivery_receipts.sql` before starting any M11.6 `DurableStore` writer, receiver or worker against an existing database. The M11.6 store reads the delivery-receipt counter for both keyed and non-keyed admission paths. Fresh disposable Compose databases apply it automatically from the migration mount.
 
 Run the receiver key semantics and sender/receiver fault test with PostgreSQL:
 
@@ -66,7 +68,7 @@ TEST_POSTGRES_DSN='postgres://telemetry:localdev-only@localhost:15432/telemetry?
   go test -race -count=1 -run '^TestM11DurableHTTPExporterReceiverPersistsKeyAcrossAckLoss$' ./internal/ledger
 ```
 
-The integration test commits the receiver receipt, deliberately loses the first HTTP ACK, replaces the worker, retries with the same key, and verifies a post-ACK duplicate. It snapshots full authoritative Ledger and Outbox rows before and after. It is a single-process PostgreSQL/loopback test, not a multi-database deployment benchmark.
+The integration test commits the receiver receipt, drops the first TCP response after commit, leaves the sender row under its original lease, expires that lease to simulate process death, replaces the worker, retries with the same key, and verifies a post-ACK duplicate. It snapshots full authoritative Ledger and Outbox rows before and after. It is a single-process PostgreSQL/loopback test, not a multi-database deployment benchmark.
 
 ## Explicit limits
 
