@@ -48,6 +48,18 @@ The integration test uses actual partition metadata to verify replica count, ISR
 All **nine** required GitHub Actions workflows passed on PR head `b6ed95d`, including the 100,000-event Kafka→ClickHouse regression. The [final three-broker HA run](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43893131251) uploaded `m3b-kafka-ha-report`; squash-merged as `8651745`.
 
 
+## Expected untreated dynamic-IP failure classification
+
+The dynamic profile intentionally preserves the historical failure when an
+actual two-voter address reassignment is followed by cross-target KRaft VOTE
+requests and ISR3 does not recover. The CI wrapper may classify only that
+fully evidenced signature as `EXPECTED_UNTREATED_FAILURE_REPRODUCED` so the
+evidence-collection workflow itself can complete. The receipt remains
+`FAILED_ISR3_NOT_RESTORED`; this is **not** a Kafka recovery pass, mitigation,
+or root-cause proof. Any failure without the exact address-reassignment,
+cross-target VOTE, no-unsafe-ACK, and complete identity/socket evidence remains
+a failed CI job.
+
 ## Investigation: intermittent post-quorum-loss voter mismatch (Issue #28)
 
 The historic successes above are real but do **not** imply every subsequent

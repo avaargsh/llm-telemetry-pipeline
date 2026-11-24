@@ -11,6 +11,8 @@ on:
       - "scripts/m3b_kraft_diagnostics.py"
       - "scripts/m3b_kraft_audit.py"
       - "scripts/m3b_controller_sockets.py"
+      - "scripts/m3b_expected_dynamic_failure.py"
+      - "scripts/test_m3b_expected_dynamic_failure.py"
   workflow_dispatch:
 jobs:
   network-ab:
@@ -50,6 +52,7 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_m3b_controller_sockets.py' -v
           python3 -m unittest discover -s scripts -p 'test_m3b_kraft_audit.py' -v
           python3 -m unittest discover -s scripts -p 'test_m3b_kraft_diagnostics.py' -v
+          python3 -m unittest discover -s scripts -p 'test_m3b_expected_dynamic_failure.py' -v
           go test -count=1 ./internal/kafkaha
       - name: Real parallel two-controller Kafka fault under selected network
         env:
