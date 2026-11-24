@@ -153,7 +153,9 @@ def snapshot(phase):
         "schema_version": 1,
         "phase": phase,
         "git_sha": os.getenv("GITHUB_SHA", "local"),
-        "run_id": os.getenv("GITHUB_RUN_ID", "local"),
+        "exact_head": os.getenv("M3B_EXACT_HEAD", ""),
+        "run_id": os.getenv("GITHUB_RUN_ID", ""),
+        "run_attempt": os.getenv("GITHUB_RUN_ATTEMPT", ""),
         "captured_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
         "identity_verdict": ("FAIL_IDENTITY" if findings else
                              "INCOMPLETE" if incomplete else "PASS_IDENTITY"),
