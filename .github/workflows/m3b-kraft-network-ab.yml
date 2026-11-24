@@ -22,6 +22,9 @@ on:
       - "scripts/m3b_dns_ttl_aggregate.py"
       - "scripts/test_m3b_dns_ttl_aggregate.py"
   workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   network-ab:
     name: KRaft-parallel-fault-${{ matrix.profile }}-network-trial-${{ matrix.trial }}
