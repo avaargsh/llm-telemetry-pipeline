@@ -1,10 +1,8 @@
 package genaiobs
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
-	"io"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -29,74 +27,6 @@ type otlpJSONSpan struct {
 	} `json:"attributes"`
 }
 
-// rejectAmbiguousJSONMembers rejects duplicate and case-fold-colliding object
-// members before encoding/json maps fields. encoding/json otherwise accepts
-// duplicate keys and matches struct fields case-insensitively, which can make
-// security-relevant fields depend on member order.
-func rejectAmbiguousJSONMembers(body []byte) error {
-	decoder := json.NewDecoder(bytes.NewReader(body))
-	if err := consumeUniqueJSONValue(decoder); err != nil {
-		return err
-	}
-	if _, err := decoder.Token(); err != io.EOF {
-		if err == nil {
-			return errors.New("multiple JSON values")
-		}
-		return err
-	}
-	return nil
-}
-
-func consumeUniqueJSONValue(decoder *json.Decoder) error {
-	token, err := decoder.Token()
-	if err != nil {
-		return err
-	}
-	delimiter, ok := token.(json.Delim)
-	if !ok {
-		return nil
-	}
-	switch delimiter {
-	case '{':
-		seen := make(map[string]struct{})
-		for decoder.More() {
-			keyToken, err := decoder.Token()
-			if err != nil {
-				return err
-			}
-			key, ok := keyToken.(string)
-			if !ok {
-				return ErrInvalidOTLPJSON
-			}
-			folded := strings.ToLower(key)
-			if _, exists := seen[folded]; exists {
-				return ErrInvalidOTLPJSON
-			}
-			seen[folded] = struct{}{}
-			if err := consumeUniqueJSONValue(decoder); err != nil {
-				return err
-			}
-		}
-		closing, err := decoder.Token()
-		if err != nil || closing != json.Delim('}') {
-			return ErrInvalidOTLPJSON
-		}
-	case '[':
-		for decoder.More() {
-			if err := consumeUniqueJSONValue(decoder); err != nil {
-				return err
-			}
-		}
-		closing, err := decoder.Token()
-		if err != nil || closing != json.Delim(']') {
-			return ErrInvalidOTLPJSON
-		}
-	default:
-		return ErrInvalidOTLPJSON
-	}
-	return nil
-}
-
 // DecodeOTLPJSON projects a bounded, prefiltered GenAI OTLP/HTTP JSON batch.
 // It is not a general OTLP decoder, HTTP handler, authenticator or ACK boundary.
 // No tenant identity is read from the wire. The caller must supply trusted scope
@@ -108,8 +38,8 @@ func DecodeOTLPJSON(body []byte) ([]Span, error) {
 	if !utf8.Valid(body) {
 		return nil, ErrInvalidOTLPJSON
 	}
-	if err := rejectAmbiguousJSONMembers(body); err != nil {
-		return nil, ErrInvalidOTLPJSON
+	if err := validateOTLPJSONStructure(body); err != nil {
+		return nil, err
 	}
 	var request struct {
 		ResourceSpans []struct {
