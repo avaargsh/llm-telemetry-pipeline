@@ -197,6 +197,58 @@ func TestGenAIObservationsDoNotChangeLedger(t *testing.T) {
 		}
 		unchanged(t)
 	})
+	t.Run("atomic batch rejection replay and drain", func(t *testing.T) {
+		q, err := genaiobs.NewQueue(3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		scopeA := genaiobs.Scope{TenantID: tenantA}
+		scopeB := genaiobs.Scope{TenantID: tenantB}
+		if err := q.Submit(scopeA, genaiobs.Version, base); err != nil {
+			t.Fatal(err)
+		}
+		unchanged(t)
+		replay := base
+		replay.Attributes = append(append([]genaiobs.Attribute(nil), base.Attributes...),
+			genaiobs.Attribute{Key: "gen_ai.usage.input_tokens", Value: int64(999999)})
+		pending := base
+		pending.RequestID = "ledger-m10-batch-unfinalized"
+		pending.Attributes = append(append([]genaiobs.Attribute(nil), base.Attributes...),
+			genaiobs.Attribute{Key: "tenant.id", Value: tenantA})
+		invalid := base
+		invalid.Attributes = append(append([]genaiobs.Attribute(nil), base.Attributes...),
+			genaiobs.Attribute{Key: "gen_ai.usage.input_tokens", Value: int64(-1)})
+		if err := q.SubmitBatch(scopeB, genaiobs.Version, []genaiobs.Span{pending, invalid}); err != genaiobs.ErrInvalid || q.Len() != 1 {
+			t.Fatalf("invalid batch must not admit its valid prefix: %v", err)
+		}
+		unchanged(t)
+		if err := q.SubmitBatch(scopeB, genaiobs.Version, []genaiobs.Span{pending, replay, pending}); err != genaiobs.ErrQueueFull || q.Len() != 1 {
+			t.Fatalf("overloaded batch must not admit its prefix: %v", err)
+		}
+		unchanged(t)
+		if err := q.SubmitBatch(scopeB, genaiobs.Version, []genaiobs.Span{pending, replay}); err != nil || q.Len() != 3 {
+			t.Fatalf("valid batch admission: %v", err)
+		}
+		unchanged(t)
+		o, ok := q.Pop()
+		if !ok || o.TenantID != tenantA || o.RequestID != base.RequestID || o.InputTokens != nil {
+			t.Fatal("original observation changed")
+		}
+		unchanged(t)
+		o, ok = q.Pop()
+		if !ok || o.TenantID != tenantB || o.RequestID != pending.RequestID || o.InputTokens != nil {
+			t.Fatal("pending observation scope or FIFO changed")
+		}
+		unchanged(t)
+		o, ok = q.Pop()
+		if !ok || o.TenantID != tenantB || o.RequestID != replay.RequestID || o.InputTokens == nil || *o.InputTokens != 999999 {
+			t.Fatal("replayed observation scope or tokens changed")
+		}
+		unchanged(t)
+		if _, ok := q.Pop(); ok || q.Len() != 0 {
+			t.Fatal("batch queue not drained")
+		}
+	})
 	// The authoritative retry remains a duplicate with exactly the same rows.
 	if result, err := store.Record(ctx, first); err != nil || result != Duplicate {
 		t.Fatalf("authoritative retry changed semantics: %v %v", result, err)
