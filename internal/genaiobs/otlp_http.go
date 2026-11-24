@@ -18,7 +18,7 @@ type otlpPrincipal struct {
 	scope Scope
 }
 type otlpHTTPHandler struct {
-	queue      *Queue
+	admitter   ObservationAdmitter
 	principals []otlpPrincipal
 	slots      chan struct{}
 }
@@ -27,10 +27,22 @@ type otlpHTTPHandler struct {
 // must configure TLS, HTTP timeouts and header/connection limits before serving.
 // A successful response acknowledges volatile queue admission only.
 func NewOTLPHTTPHandler(q *Queue, creds []OTLPCredential, concurrent int) (http.Handler, error) {
-	if q == nil || len(q.slots) == 0 || len(creds) == 0 || len(creds) > 128 || concurrent < 1 || concurrent > 64 {
+	return NewOTLPHTTPHandlerWithAdmitter(q, creds, concurrent)
+}
+
+// NewDurableOTLPHTTPHandler admits authenticated OTLP projections directly to
+// PostgreSQL. A 200 response acknowledges the durable transaction commit.
+func NewDurableOTLPHTTPHandler(store *DurableStore, creds []OTLPCredential, concurrent int) (http.Handler, error) {
+	return NewOTLPHTTPHandlerWithAdmitter(store, creds, concurrent)
+}
+
+// NewOTLPHTTPHandlerWithAdmitter shares wire/auth limits across volatile and
+// durable admission backends. The backend must provide atomic batch admission.
+func NewOTLPHTTPHandlerWithAdmitter(admitter ObservationAdmitter, creds []OTLPCredential, concurrent int) (http.Handler, error) {
+	if admitter == nil || admitter.MaxBatchSize() < 1 || len(creds) == 0 || len(creds) > 128 || concurrent < 1 || concurrent > 64 {
 		return nil, errors.New("invalid observation receiver configuration")
 	}
-	h := &otlpHTTPHandler{queue: q, slots: make(chan struct{}, concurrent)}
+	h := &otlpHTTPHandler{admitter: admitter, slots: make(chan struct{}, concurrent)}
 	seen := make(map[[32]byte]bool, len(creds))
 	for _, c := range creds {
 		if !validOTLPToken(c.Token) || !identifier(c.TenantID, 128) {
@@ -141,7 +153,7 @@ func (h *otlpHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Queue capacity is immutable; a batch larger than capacity cannot succeed on retry.
-	if len(spans) > len(h.queue.slots) {
+	if len(spans) > h.admitter.MaxBatchSize() {
 		otlpHTTPError(w, 413, "batch exceeds queue capacity")
 		return
 	}
@@ -149,11 +161,18 @@ func (h *otlpHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		otlpHTTPError(w, 503, "request canceled")
 		return
 	}
-	if err := h.queue.SubmitBatch(scope, Version, spans); err != nil {
-		if errors.Is(err, ErrQueueFull) {
+	if err := h.admitter.AdmitBatch(r.Context(), scope, Version, spans); err != nil {
+		switch {
+		case errors.Is(err, ErrQueueFull), errors.Is(err, ErrDurableQueueFull):
 			otlpHTTPOverload(w)
-		} else {
-			otlpHTTPError(w, 400, "invalid request")
+		case errors.Is(err, ErrObservationConflict):
+			otlpHTTPError(w, http.StatusConflict, "observation identity conflict")
+		case errors.Is(err, ErrInvalid), errors.Is(err, ErrInvalidBatchSize), errors.Is(err, ErrUnsupportedVersion):
+			otlpHTTPError(w, http.StatusBadRequest, "invalid observation")
+		default:
+			// Database and other backend failures are retryable service errors,
+			// never mislabeled as malformed client input.
+			otlpHTTPOverload(w)
 		}
 		return
 	}
