@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"os"
 	"testing"
 	"time"
@@ -157,4 +158,33 @@ func TestDurableOTLPHTTPAdmissionSurvivesWorkerRestart(t *testing.T) {
 	// does not recreate the already-ACKed queue row within the receipt window.
 	if status:=post();status!=http.StatusOK { t.Fatalf("replay admission status=%d",status) }
 	if n,err:=restarted.Len(context.Background());err!=nil||n!=0 { t.Fatalf("replay recreated queue row: %d %v",n,err) }
+}
+
+func TestDurableStoreCapacityIsGlobalAcrossConcurrentWriters(t *testing.T) {
+	store,db:=openDurableTestStore(t,2)
+	other,err:=NewDurableStore(db,2);if err!=nil { t.Fatal(err) }
+	tenant:=fmt.Sprintf("durable-test-%d",time.Now().UnixNano())
+	const writers=12
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	admitted,full,unexpected:=0,0,[]error{}
+	for i:=0;i<writers;i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			trace:=fmt.Sprintf("%032x",i+1)
+			err:=[]*DurableStore{store,other}[i%2].Enqueue(context.Background(),durableTestObservation(tenant,trace,int64(i)))
+			mu.Lock()
+			defer mu.Unlock()
+			switch {
+			case err==nil: admitted++
+			case errors.Is(err,ErrDurableQueueFull): full++
+			default: unexpected=append(unexpected,err)
+			}
+		}(i)
+	}
+	wg.Wait()
+	if len(unexpected)>0 { t.Fatalf("unexpected concurrent admission errors: %v",unexpected) }
+	if admitted!=2||full!=writers-2 { t.Fatalf("admitted=%d full=%d; capacity was not globally fenced",admitted,full) }
+	if n,err:=store.Len(context.Background());err!=nil||n!=2 { t.Fatalf("durable count=%d err=%v",n,err) }
 }
