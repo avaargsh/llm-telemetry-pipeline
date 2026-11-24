@@ -17,7 +17,7 @@ import tempfile
 
 NODES = ("broker1", "broker2", "broker3")
 KAFKA_IMAGE_REF = "apache/kafka:4.1.0@sha256:bff074a5d0051dbc0bbbcd25b045bb1fe84833ec0d3c7c965d1797dd289ec88f"
-KAFKA_IMAGE_REF_PATTERN = re.compile(r"apache/kafka:[0-9]+\\.[0-9]+\\.[0-9]+@sha256:[0-9a-f]{64}\\Z")
+KAFKA_IMAGE_REF_PATTERN = re.compile(r"apache/kafka:[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}\Z")
 META_KEYS = frozenset(("node.id", "cluster.id", "directory.id"))
 JAVA_RUNTIME_KEYS = frozenset((
     "java.vendor", "java.version", "java.runtime.version",
