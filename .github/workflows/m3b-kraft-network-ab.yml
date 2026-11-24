@@ -69,7 +69,6 @@ jobs:
       - name: Validate controlled Docker profile and independent negative tests
         env:
           M3B_HA_COMPOSE_FILE: ${{ matrix.compose }}
-          M3B_EXPECTED_KAFKA_IMAGE_REF: ${{ matrix.image_ref }}
         run: |
           bash -n scripts/m3b-kraft-parallel-smoke.sh
           docker compose -f "$M3B_HA_COMPOSE_FILE" config >/dev/null
