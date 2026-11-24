@@ -91,13 +91,17 @@ func TestThreeBrokerParallelVoterRestart(t *testing.T) {
  // For dynamic profiles, reserve the old voter IPv4s and reconnect the
  // same stopped broker containers with their service aliases. This forces
  // real endpoint churn while preserving container IDs and Kafka volumes.
+ var dynamicReassignment *dynamicEndpointReassignment
  if len(dynamicEndpoints)>0 {
-    report["forced_dynamic_endpoint_reassignment"]=haReassignDynamicBrokerEndpoints(t,ctx,dynamicEndpoints)
+    dynamicReassignment=haReassignDynamicBrokerEndpoints(t,ctx,dynamicEndpoints)
  }
  // Critically: ONE Docker compose start request with BOTH voters. No pause,
  // sequential ISR2 observation, delete, format or volume reset between them.
  restartStart:=time.Now()
  haCompose(t,ctx,append([]string{"start"},stopped...)...)
+ if dynamicReassignment!=nil {
+    report["forced_dynamic_endpoint_reassignment"]=dynamicReassignment.verifyAndRelease(t,ctx)
+ }
  report["single_compose_restart_request"]=true
  t.Logf("start of both stopped voter services requested in one docker compose command")
  q:=haQuorumStatusObserved(t,ctx,keeper)

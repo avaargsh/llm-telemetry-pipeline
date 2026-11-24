@@ -149,7 +149,24 @@ func haCaptureDynamicBrokerEndpoints(t *testing.T, ctx context.Context, services
     return endpoints
 }
 
-func haReassignDynamicBrokerEndpoints(t *testing.T, ctx context.Context, endpoints []dynamicBrokerEndpoint) map[string]map[string]string {
+type dynamicEndpointReassignment struct {
+    endpoints        []dynamicBrokerEndpoint
+    reservationNames []string
+}
+
+func (r *dynamicEndpointReassignment) cleanupReservations() {
+    if r == nil || len(r.reservationNames) == 0 {
+        return
+    }
+    cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+    defer cancel()
+    for _, name := range r.reservationNames {
+        _, _ = haDockerCommand(cleanupCtx, "rm", "-f", name)
+    }
+    r.reservationNames = nil
+}
+
+func haReassignDynamicBrokerEndpoints(t *testing.T, ctx context.Context, endpoints []dynamicBrokerEndpoint) *dynamicEndpointReassignment {
     t.Helper()
     if len(endpoints) == 0 {
         return nil
@@ -169,9 +186,13 @@ func haReassignDynamicBrokerEndpoints(t *testing.T, ctx context.Context, endpoin
         oldIPs[endpoint.ipv4] = struct{}{}
     }
 
+    reassignment := &dynamicEndpointReassignment{endpoints: endpoints}
+    // Register cleanup before any Docker mutation. If a later operation fails,
+    // no temporary address holder is allowed to outlive this test.
+    t.Cleanup(reassignment.cleanupReservations)
+
     // A stopped Docker container may already have been detached by the
-    // engine. Disconnect it if the endpoint still exists; in either case
-    // verify the old endpoint is gone before reserving its IPv4.
+    // engine. Disconnect it if the endpoint still exists.
     for _, endpoint := range endpoints {
         raw, inspectErr := haDockerCommand(ctx, "network", "inspect", "--format", "{{json .Containers}}", network)
         if inspectErr != nil {
@@ -183,35 +204,14 @@ func haReassignDynamicBrokerEndpoints(t *testing.T, ctx context.Context, endpoin
         }
         if attached {
             haDocker(t, ctx, "network", "disconnect", "-f", network, endpoint.containerID)
-            raw, inspectErr = haDockerCommand(ctx, "network", "inspect", "--format", "{{json .Containers}}", network)
-            if inspectErr != nil {
-                t.Fatalf("inspect network %s after detaching %s: %v", network, endpoint.service, inspectErr)
-            }
-            attached, parseErr = dockerNetworkHasContainer(raw, endpoint.containerID)
-            if parseErr != nil {
-                t.Fatalf("verify detached %s: %v", endpoint.service, parseErr)
-            }
-            if attached {
-                t.Fatalf("%s still attached to %s after disconnect", endpoint.service, network)
-            }
         }
     }
-
-    reservationNames := make([]string, 0, len(endpoints))
-    cleanupReservations := func() {
-        cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-        defer cancel()
-        for _, name := range reservationNames {
-            _, _ = haDockerCommand(cleanupCtx, "rm", "-f", name)
-        }
-    }
-    defer cleanupReservations()
 
     // Occupy the released addresses with disposable non-Kafka containers so
     // Docker must allocate different IPv4 endpoints to the original brokers.
     for i, endpoint := range endpoints {
         name := fmt.Sprintf("m3b-ip-hold-%s-%d", endpoint.service, time.Now().UnixNano()+int64(i))
-        reservationNames = append(reservationNames, name)
+        reassignment.reservationNames = append(reassignment.reservationNames, name)
         runArgs := []string{"run", "-d", "--rm", "--name", name,
             "--network", network, "--ip", endpoint.ipv4,
             "busybox:1.36", "sleep", "600"}
@@ -229,7 +229,9 @@ func haReassignDynamicBrokerEndpoints(t *testing.T, ctx context.Context, endpoin
     }
 
     // Reattach the same stopped broker containers, preserving service DNS
-    // aliases and their named Kafka volumes, but let Docker choose new IPs.
+    // aliases and named Kafka volumes. Docker may not publish the assigned
+    // IPv4 until the stopped container is started; verify it immediately after
+    // the single Compose start request, while old addresses remain reserved.
     for _, endpoint := range endpoints {
         args := []string{"network", "connect"}
         for _, alias := range endpoint.aliases {
@@ -238,16 +240,27 @@ func haReassignDynamicBrokerEndpoints(t *testing.T, ctx context.Context, endpoin
         args = append(args, network, endpoint.containerID)
         haDocker(t, ctx, args...)
     }
+    return reassignment
+}
 
-    changes := make(map[string]map[string]string, len(endpoints))
-    newIPs := make(map[string]struct{}, len(endpoints))
-    for _, endpoint := range endpoints {
+func (r *dynamicEndpointReassignment) verifyAndRelease(t *testing.T, ctx context.Context) map[string]map[string]string {
+    t.Helper()
+    if r == nil {
+        return nil
+    }
+    oldIPs := make(map[string]struct{}, len(r.endpoints))
+    for _, endpoint := range r.endpoints {
+        oldIPs[endpoint.ipv4] = struct{}{}
+    }
+    changes := make(map[string]map[string]string, len(r.endpoints))
+    newIPs := make(map[string]struct{}, len(r.endpoints))
+    for _, endpoint := range r.endpoints {
         raw := haDocker(t, ctx, "inspect", "--format", "{{json .NetworkSettings.Networks}}", endpoint.containerID)
         networkName, newIP, aliases, err := parseDockerNetworkEndpoint(raw)
         if err != nil {
-            t.Fatalf("inspect reassigned %s endpoint: %v", endpoint.service, err)
+            t.Fatalf("inspect reassigned %s endpoint after start: %v", endpoint.service, err)
         }
-        if networkName != network || newIP == endpoint.ipv4 {
+        if networkName != endpoint.network || newIP == endpoint.ipv4 {
             t.Fatalf("Docker did not reassign %s: network=%s old=%s new=%s", endpoint.service, networkName, endpoint.ipv4, newIP)
         }
         if _, reused := oldIPs[newIP]; reused {
@@ -270,11 +283,10 @@ func haReassignDynamicBrokerEndpoints(t *testing.T, ctx context.Context, endpoin
         changes[endpoint.service] = map[string]string{"before_ipv4": endpoint.ipv4, "after_ipv4": newIP}
         t.Logf("forced Docker endpoint reassignment %s: %s -> %s", endpoint.service, endpoint.ipv4, newIP)
     }
-
-    for _, name := range reservationNames {
+    for _, name := range r.reservationNames {
         haDocker(t, ctx, "rm", "-f", name)
     }
-    reservationNames = nil
+    r.reservationNames = nil
     return changes
 }
 
