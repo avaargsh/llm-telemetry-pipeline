@@ -1,8 +1,12 @@
 name: m5a-authenticated-ingestion
 on:
   push:
+    branches: [master]
   pull_request:
   workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   postgres-ingestion:
     runs-on: ubuntu-latest

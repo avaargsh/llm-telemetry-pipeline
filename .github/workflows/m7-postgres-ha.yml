@@ -2,6 +2,9 @@ name: m7-postgres-physical-ha-fault
 on:
   pull_request:
   workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   postgres-physical-standby-failover:
     runs-on: ubuntu-latest
