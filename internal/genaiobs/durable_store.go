@@ -329,7 +329,7 @@ func (s *DurableStore) DropFailed(ctx context.Context,tenant string,id int64)(Ob
 	d,err:=scanDelivery(tx.QueryRowContext(ctx,`DELETE FROM genai_observations
 WHERE tenant_id=$1 AND observation_id=$2 AND terminal_at IS NOT NULL
 RETURNING observation_id,schema_version,tenant_id,trace_id,span_id,request_id,attempt_id,
- provider,operation,request_model,response_model,status,input_tokens,output_tokens,attempts,now()`,id))
+ provider,operation,request_model,response_model,status,input_tokens,output_tokens,attempts,now()`,tenant,id))
 	if errors.Is(err,sql.ErrNoRows) { return Observation{},ErrNoFailedObservation }
 	if err!=nil { return Observation{},fmt.Errorf("drop terminal observation: %w",err) }
 	result,err:=tx.ExecContext(ctx,"UPDATE genai_observation_queue_state SET queue_items=queue_items-1 WHERE singleton=true AND queue_items>0")
