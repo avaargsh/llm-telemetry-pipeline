@@ -34,7 +34,7 @@ mkdir -p "$diagnostics"
 rm -f "$M3B_CONTROLLER_SOCKET_RAW_PATH" "$M3B_CONTROLLER_SOCKET_SUMMARY_PATH"
 rm -f "$M3B_PARALLEL_REPORT_PATH" "$diagnostics/before_fault.json" \
   "$diagnostics/after_failure.json" "$diagnostics/after_success.json" \
-  "$diagnostics/voter-identity-audit.json"
+  "$diagnostics/voter-identity-audit.json" "$diagnostics/network-ab-comparison.json" "$diagnostics/expected-dynamic-failure.json"
 
 capture() {
   python3 scripts/m3b_kraft_diagnostics.py --phase "$1" --out-dir "$diagnostics" || true
@@ -55,6 +55,28 @@ cleanup() {
     echo "Parallel KRaft voter recovery FAILED; preserving read-only evidence" >&2
     capture after_failure >&2
     audit after_failure >&2
+    python3 scripts/m3b_network_ab_evidence.py \
+      --failed-run --profile "$profile" --head "$M3B_EXACT_HEAD" \
+      --report "$M3B_PARALLEL_REPORT_PATH" \
+      --audit "$diagnostics/voter-identity-audit.json" \
+      --sockets "$M3B_CONTROLLER_SOCKET_SUMMARY_PATH" \
+      --before "$diagnostics/before_fault.json" \
+      --after "$diagnostics/after_failure.json" \
+      --out "$diagnostics/network-ab-comparison.json" >&2 || true
+    if [[ "$profile" == "dynamic" ]]; then
+      if python3 scripts/m3b_expected_dynamic_failure.py \
+        --head "$M3B_EXACT_HEAD" \
+        --report "$M3B_PARALLEL_REPORT_PATH" \
+        --comparison "$diagnostics/network-ab-comparison.json" \
+        --audit "$diagnostics/voter-identity-audit.json" \
+        --sockets "$M3B_CONTROLLER_SOCKET_SUMMARY_PATH" \
+        --before "$diagnostics/before_fault.json" \
+        --after "$diagnostics/after_failure.json" \
+        --out "$diagnostics/expected-dynamic-failure.json" >&2; then
+        echo "EXPECTED_UNTREATED_FAILURE_REPRODUCED; Kafka recovery remains FAILED" >&2
+        rc=0
+      fi
+    fi
     "${compose[@]}" ps >&2 || true
     "${compose[@]}" logs --no-color --tail 75 broker1 broker2 broker3 >&2 || true
   fi

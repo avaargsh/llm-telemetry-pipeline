@@ -11,13 +11,17 @@ on:
       - "scripts/m3b_kraft_diagnostics.py"
       - "scripts/m3b_kraft_audit.py"
       - "scripts/m3b_controller_sockets.py"
+      - "scripts/m3b_expected_dynamic_failure.py"
+      - "scripts/test_m3b_expected_dynamic_failure.py"
   workflow_dispatch:
 jobs:
   network-ab:
-    name: KRaft-parallel-fault-${{ matrix.profile }}-network
+    name: KRaft-parallel-fault-${{ matrix.profile }}-network-trial-${{ matrix.trial }}
     strategy:
       fail-fast: false
       matrix:
+        profile: [pinned, dynamic]
+        trial: [1, 2, 3]
         include:
           - profile: pinned
             compose: deployments/docker-compose-ha.yml
@@ -48,6 +52,7 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_m3b_controller_sockets.py' -v
           python3 -m unittest discover -s scripts -p 'test_m3b_kraft_audit.py' -v
           python3 -m unittest discover -s scripts -p 'test_m3b_kraft_diagnostics.py' -v
+          python3 -m unittest discover -s scripts -p 'test_m3b_expected_dynamic_failure.py' -v
           go test -count=1 ./internal/kafkaha
       - name: Real parallel two-controller Kafka fault under selected network
         env:
@@ -60,7 +65,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m3b-network-ab-kafka-${{ matrix.profile }}
+          name: m3b-network-ab-kafka-${{ matrix.profile }}-trial-${{ matrix.trial }}
           path: /tmp/m3b-parallel-restart-report.json
           if-no-files-found: warn
           retention-days: 14
@@ -68,7 +73,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m3b-network-ab-identity-${{ matrix.profile }}
+          name: m3b-network-ab-identity-${{ matrix.profile }}-trial-${{ matrix.trial }}
           path: /tmp/m3b-parallel-kraft-diagnostics/*.json
           if-no-files-found: warn
           retention-days: 14
@@ -76,7 +81,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m3b-network-ab-sockets-${{ matrix.profile }}
+          name: m3b-network-ab-sockets-${{ matrix.profile }}-trial-${{ matrix.trial }}
           path: /tmp/m3b-parallel-kraft-diagnostics/controller-peers.jsonl
           if-no-files-found: warn
           retention-days: 14

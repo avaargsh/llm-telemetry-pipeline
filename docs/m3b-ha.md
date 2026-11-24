@@ -48,6 +48,18 @@ The integration test uses actual partition metadata to verify replica count, ISR
 All **nine** required GitHub Actions workflows passed on PR head `b6ed95d`, including the 100,000-event Kafka→ClickHouse regression. The [final three-broker HA run](https://github.com/avaargsh/llm-telemetry-pipeline/actions/runs/43893131251) uploaded `m3b-kafka-ha-report`; squash-merged as `8651745`.
 
 
+## Expected untreated dynamic-IP failure classification
+
+The dynamic profile intentionally preserves the historical failure when an
+actual two-voter address reassignment is followed by cross-target KRaft VOTE
+requests and ISR3 does not recover. The CI wrapper may classify only that
+fully evidenced signature as `EXPECTED_UNTREATED_FAILURE_REPRODUCED` so the
+evidence-collection workflow itself can complete. The receipt remains
+`FAILED_ISR3_NOT_RESTORED`; this is **not** a Kafka recovery pass, mitigation,
+or root-cause proof. Any failure without the exact address-reassignment,
+cross-target VOTE, no-unsafe-ACK, and complete identity/socket evidence remains
+a failed CI job.
+
 ## Investigation: intermittent post-quorum-loss voter mismatch (Issue #28)
 
 The historic successes above are real but do **not** imply every subsequent
@@ -431,3 +443,7 @@ target at message send time. If either experiment cannot finish the real
 Kafka recovery, it remains a visible failed experiment rather than being
 declared a passing HA release. Keep Issue #28 open until causality is
 verified. No production IPAM, HA SLO or Apache Kafka defect claims.
+
+## Repeated network-control exposure evidence
+
+The network A/B workflow runs three independent jobs per profile (six total), with trial-specific artifacts. The comparator reports `endpoint_exposure` independently of verified recovery: `PINNED_CONTROL`, `NO_ADDRESS_CHANGE_OBSERVED`, `ADDRESS_CHANGE_WITHOUT_REASSIGNMENT`, or `ADDRESS_REASSIGNMENT_OBSERVED`. The last category requires a previously owned IPv4 address to be observed under another broker after recovery. Before/after snapshots cannot establish when a transient address changed or prove JVM cache causality. No observed change is an unexposed trial, not a falsification of the endpoint-reassignment hypothesis. All existing RF3/ISR3, no-ACK and sealed-event readback gates remain mandatory. Missing or malformed drift observations fail closed. This is a bounded observational repeat, not a forced IP reassignment experiment or a production SLO. Issue #28 remains open.

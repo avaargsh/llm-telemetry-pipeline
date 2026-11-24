@@ -1,7 +1,9 @@
 """M3b diagnostic evidence contract; all cases use synthetic Docker/KRaft data."""
 import importlib.util
+import os
 import pathlib
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location(
     "diagnostics", pathlib.Path(__file__).with_name("m3b_kraft_diagnostics.py")
@@ -31,6 +33,14 @@ def node(num, ip):
 
 
 class KafkaMetadataValidationTests(unittest.TestCase):
+    def test_run_context_uses_checked_out_head_and_github_attempt(self):
+        with patch.dict(os.environ, {"M3B_EXACT_HEAD": "a" * 40,
+                                     "GITHUB_RUN_ID": "12345",
+                                     "GITHUB_RUN_ATTEMPT": "2"}):
+            receipt = diagnostics.run_context()
+        self.assertEqual(receipt, {"exact_head": "a" * 40,
+                                   "run_id": "12345",
+                                   "run_attempt": "2"})
     def test_meta_properties_accepts_only_known_identity_fields(self):
         data = """version=1
 cluster.id=test-only-cluster
