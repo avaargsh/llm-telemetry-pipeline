@@ -14,10 +14,12 @@ on:
   workflow_dispatch:
 jobs:
   network-ab:
-    name: KRaft-parallel-fault-${{ matrix.profile }}-network
+    name: KRaft-parallel-fault-${{ matrix.profile }}-network-trial-${{ matrix.trial }}
     strategy:
       fail-fast: false
       matrix:
+        profile: [pinned, dynamic]
+        trial: [1, 2, 3]
         include:
           - profile: pinned
             compose: deployments/docker-compose-ha.yml
@@ -60,7 +62,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m3b-network-ab-kafka-${{ matrix.profile }}
+          name: m3b-network-ab-kafka-${{ matrix.profile }}-trial-${{ matrix.trial }}
           path: /tmp/m3b-parallel-restart-report.json
           if-no-files-found: warn
           retention-days: 14
@@ -68,7 +70,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m3b-network-ab-identity-${{ matrix.profile }}
+          name: m3b-network-ab-identity-${{ matrix.profile }}-trial-${{ matrix.trial }}
           path: /tmp/m3b-parallel-kraft-diagnostics/*.json
           if-no-files-found: warn
           retention-days: 14
@@ -76,7 +78,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: m3b-network-ab-sockets-${{ matrix.profile }}
+          name: m3b-network-ab-sockets-${{ matrix.profile }}-trial-${{ matrix.trial }}
           path: /tmp/m3b-parallel-kraft-diagnostics/controller-peers.jsonl
           if-no-files-found: warn
           retention-days: 14
