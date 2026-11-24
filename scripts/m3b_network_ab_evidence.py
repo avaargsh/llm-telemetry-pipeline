@@ -41,22 +41,12 @@ def _ip_map(snapshot):
     return values
 
 
-def assess(profile, head, report, audit, sockets, before, after):
+def observe(profile, head, audit, sockets, before, after):
     ensure(profile in MODES,"unsupported network profile")
     ensure(isinstance(head,str) and head and head!="UNBOUND","missing exact HEAD")
-    for name,doc in (("Kafka",report),("audit",audit),("sockets",sockets)):
+    for name,doc in (("audit",audit),("sockets",sockets)):
         ensure(isinstance(doc,dict) and doc.get("exact_head")==head,
                name+" proof bound to wrong head")
-    ensure(report.get("scenario")=="two_voter_parallel_restart"
-           and report.get("result")=="PASS_EXPERIMENT_ONLY",
-           "real parallel KRaft fault did not recover")
-    ensure(report.get("initial_isr")==3 and report.get("recovered_isr")==3,
-           "RF3/ISR3 recovery not independently verified")
-    ensure(report.get("acknowledged_ids")==35 and
-           report.get("all_acknowledged_verified") is True,
-           "35/35 ACKed records not independently recovered")
-    ensure(report.get("no_ack_during_quorum_loss") is True,
-           "unsafe Kafka broker ACK during controller majority loss")
     ensure(audit.get("complete_observations") is True,
            "missing persisted voter/Docker DNS evidence")
     ensure(audit.get("identity_changes")==[], "persisted voter ID changed")
@@ -108,15 +98,47 @@ def assess(profile, head, report, audit, sockets, before, after):
     return {
         "schema_version":1, "exact_head":head, "profile":profile,
         "endpoint_exposure":exposure,
-        "result":("RECOVERY_VERIFIED_ENDPOINTS_FIXED" if profile=="pinned"
-                  else "RECOVERY_VERIFIED_ENDPOINTS_DYNAMIC_OBSERVED"),
-        "initial_ack_count":35, "acknowledged_readback_verified":True,
         "ip_changed_nodes":changed, "reassigned_addresses":reassigned,
         "cross_target_voter_request_count":count,
         "controller_socket_samples":sockets["sample_count"],
         "causal_root_cause_proven":False,
         "scope":"isolated_Docker_A_B_not_java_DNS_cache_not_production_HA",
     }
+
+
+def assess(profile, head, report, audit, sockets, before, after):
+    ensure(isinstance(report,dict) and report.get("exact_head")==head,
+           "Kafka proof bound to wrong head")
+    ensure(report.get("scenario")=="two_voter_parallel_restart"
+           and report.get("result")=="PASS_EXPERIMENT_ONLY",
+           "real parallel KRaft fault did not recover")
+    ensure(report.get("initial_isr")==3 and report.get("recovered_isr")==3,
+           "RF3/ISR3 recovery not independently verified")
+    ensure(report.get("acknowledged_ids")==35 and
+           report.get("all_acknowledged_verified") is True,
+           "35/35 ACKed records not independently recovered")
+    ensure(report.get("no_ack_during_quorum_loss") is True,
+           "unsafe Kafka broker ACK during controller majority loss")
+    result=observe(profile,head,audit,sockets,before,after)
+    result.update(
+        result=("RECOVERY_VERIFIED_ENDPOINTS_FIXED" if profile=="pinned"
+                else "RECOVERY_VERIFIED_ENDPOINTS_DYNAMIC_OBSERVED"),
+        initial_ack_count=35, acknowledged_readback_verified=True)
+    return result
+
+
+def assess_failed_run(profile, head, report, audit, sockets, before, after):
+    """Preserve observed exposure without accepting an unsuccessful run."""
+    ensure(isinstance(report,dict) and report.get("exact_head")==head,
+           "Kafka proof bound to wrong head")
+    ensure(report.get("scenario")=="two_voter_parallel_restart"
+           and report.get("result") in {"INCOMPLETE","PASS_EXPERIMENT_ONLY"},
+           "unknown Kafka receipt state")
+    result=observe(profile,head,audit,sockets,before,after)
+    result.update(result="FAILED_RUN_RECOVERY_UNVERIFIED",
+                  kafka_report_result=report["result"],
+                  acknowledged_readback_verified=False)
+    return result
 
 
 def load(path):
@@ -144,9 +166,11 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     for name in ("profile","head","report","audit","sockets","before","after","out"):
         p.add_argument("--"+name,required=True)
+    p.add_argument("--failed-run",action="store_true")
     x=p.parse_args()
     try:
-        result=assess(x.profile,x.head,load(x.report),load(x.audit),load(x.sockets),
+        assess_run=assess_failed_run if x.failed_run else assess
+        result=assess_run(x.profile,x.head,load(x.report),load(x.audit),load(x.sockets),
                       load(x.before),load(x.after))
     except (ValueError,OSError,UnicodeError) as exc:
         write_atomic(x.out,{"schema_version":1,"exact_head":x.head,"profile":x.profile,
@@ -155,6 +179,8 @@ def main():
         p.exit(2, f"FAIL CLOSED KRaft network comparator: {exc}\n")
     write_atomic(x.out,result)
     print(json.dumps(result,sort_keys=True))
+    if x.failed_run:
+        p.exit(2, "FAIL CLOSED: recovery run unsuccessful; exposure recorded\n")
 
 
 if __name__=="__main__":
