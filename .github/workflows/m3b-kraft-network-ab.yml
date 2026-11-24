@@ -4,6 +4,10 @@ on:
     paths:
       - ".github/workflows/m3b-kraft-network-ab.yml"
       - "deployments/docker-compose-ha-dynamic.yml"
+      - "deployments/docker-compose-ha-dns-ttl-zero.yml"
+      - "deployments/m3b-dns-ttl-zero.security"
+      - "scripts/m3b_dns_ttl_experiment.py"
+      - "scripts/test_m3b_dns_ttl_experiment.py"
       - "internal/kafkaha/**"
       - "scripts/m3b-kraft-parallel-smoke.sh"
       - "scripts/m3b_network_ab_evidence.py"
@@ -18,13 +22,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        profile: [pinned, dynamic]
+        profile: [pinned, dynamic, dynamic-ttl-zero]
         trial: [1, 2, 3]
         include:
           - profile: pinned
+            mode: pinned
             compose: deployments/docker-compose-ha.yml
           - profile: dynamic
+            mode: dynamic
             compose: deployments/docker-compose-ha-dynamic.yml
+          - profile: dynamic-ttl-zero
+            mode: dynamic
+            compose: deployments/docker-compose-ha-dns-ttl-zero.yml
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -50,14 +59,18 @@ jobs:
           python3 -m unittest discover -s scripts -p 'test_m3b_controller_sockets.py' -v
           python3 -m unittest discover -s scripts -p 'test_m3b_kraft_audit.py' -v
           python3 -m unittest discover -s scripts -p 'test_m3b_kraft_diagnostics.py' -v
+          python3 -m unittest discover -s scripts -p 'test_m3b_dns_ttl_experiment.py' -v
           go test -count=1 ./internal/kafkaha
       - name: Real parallel two-controller Kafka fault under selected network
         env:
-          M3B_NETWORK_AB_MODE: ${{ matrix.profile }}
+          M3B_NETWORK_AB_MODE: ${{ matrix.mode }}
           M3B_HA_COMPOSE_FILE: ${{ matrix.compose }}
           M3B_KRAFT_DIAGNOSTICS_DIR: /tmp/m3b-parallel-kraft-diagnostics
           M3B_PARALLEL_REPORT_PATH: /tmp/m3b-parallel-restart-report.json
         run: bash scripts/m3b-kraft-parallel-smoke.sh
+      - name: Require qualifying reassignment and recovery in TTL treatment
+        if: matrix.profile == 'dynamic-ttl-zero'
+        run: python3 scripts/m3b_dns_ttl_experiment.py --head "$(git rev-parse HEAD)" --report /tmp/m3b-parallel-kraft-diagnostics/network-ab-comparison.json
       - name: Preserve true Kafka ACK/ISR recovery or INCOMPLETE receipt
         if: always()
         uses: actions/upload-artifact@v4
