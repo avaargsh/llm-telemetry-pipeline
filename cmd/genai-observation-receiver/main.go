@@ -29,7 +29,7 @@ import (
 
 const maxCredentialFileBytes = 64 << 10
 
-var tenantIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,127}$`)
+var tenantIDPattern = regexp.MustCompile(`^[A-Za-z0-9._:/@-]{1,128}$`)
 
 type credentialFileEntry struct {
 	Token    string `json:"token"`
@@ -46,6 +46,71 @@ func validCredentialToken(token string) bool {
 		}
 	}
 	return true
+}
+
+func rejectDuplicateJSONKeys(raw []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	var walk func() error
+	walk = func() error {
+		token, err := decoder.Token()
+		if err != nil {
+			return err
+		}
+		delim, ok := token.(json.Delim)
+		if !ok {
+			return nil
+		}
+		switch delim {
+		case '{':
+			seen := make(map[string]struct{})
+			for decoder.More() {
+				keyToken, err := decoder.Token()
+				if err != nil {
+					return err
+				}
+				key, ok := keyToken.(string)
+				if !ok {
+					return errors.New("invalid JSON object key")
+				}
+				// encoding/json also matches struct keys case-insensitively.
+				// Require canonical names before decoding into the credential struct.
+				if key != "token" && key != "tenant_id" {
+					return errors.New("invalid credential JSON object key")
+				}
+				if _, exists := seen[key]; exists {
+					return errors.New("duplicate JSON object key")
+				}
+				seen[key] = struct{}{}
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			end, err := decoder.Token()
+			if err != nil || end != json.Delim('}') {
+				return errors.New("invalid JSON object")
+			}
+		case '[':
+			for decoder.More() {
+				if err := walk(); err != nil {
+					return err
+				}
+			}
+			end, err := decoder.Token()
+			if err != nil || end != json.Delim(']') {
+				return errors.New("invalid JSON array")
+			}
+		default:
+			return errors.New("unexpected JSON delimiter")
+		}
+		return nil
+	}
+	if err := walk(); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return errors.New("trailing JSON value")
+	}
+	return nil
 }
 
 // loadCredentials accepts a small, strict JSON file. Errors deliberately never
@@ -66,6 +131,9 @@ func loadCredentials(path string) ([]genaiobs.OTLPCredential, error) {
 	raw, err := io.ReadAll(io.LimitReader(file, maxCredentialFileBytes+1))
 	if err != nil || len(raw) > maxCredentialFileBytes {
 		return nil, errors.New("credentials file is invalid or too large")
+	}
+	if err := rejectDuplicateJSONKeys(raw); err != nil {
+		return nil, errors.New("credentials file contains invalid or duplicate JSON")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
