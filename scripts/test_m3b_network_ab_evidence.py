@@ -30,8 +30,20 @@ def sockets():
             "sample_count":8,"captured_nodes":["broker1","broker2","broker3"],
             "unique_observed_controller_peers":["172.29.241.11","172.29.241.12"]}
 
-def nodes(ips):
-    return {"nodes": {f"broker{i}":{"container_ipv4":ip} for i,ip in enumerate(ips,1)}}
+def nodes(ips, java_version="21.0.8+9"):
+    return {"nodes": {
+        f"broker{i}": {
+            "container_ipv4": ip,
+            "image_ref": "apache/kafka:4.1.0@sha256:bff074a5d0051dbc0bbbcd25b045bb1fe84833ec0d3c7c965d1797dd289ec88f",
+            "repo_digest": "apache/kafka@sha256:bff074a5d0051dbc0bbbcd25b045bb1fe84833ec0d3c7c965d1797dd289ec88f",
+            "image_id": "sha256:" + "a" * 64,
+            "platform": "linux/amd64",
+            "kafka_version": "4.1.0",
+            "java_runtime_version": java_version,
+            "java_vendor": "Eclipse Adoptium",
+            "java_vm_name": "OpenJDK 64-Bit Server VM",
+        } for i,ip in enumerate(ips,1)
+    }}
 
 class NetworkABContract(unittest.TestCase):
     def test_non_string_ipv4_evidence_rejected(self):
@@ -210,6 +222,38 @@ class NetworkABContract(unittest.TestCase):
         for profile,head in (("dynamic","UNBOUND"),("fixed",HEAD),("random",HEAD)):
             with self.subTest(profile=profile,head=head),self.assertRaises(ValueError):
                 evidence.assess(profile,head,receipt(),audit(),sockets(),nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]),nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]))
+
+
+    def test_runtime_image_and_jdk_identity_is_bound_into_comparison(self):
+        same=nodes(["172.22.0.11","172.22.0.12","172.22.0.13"])
+        result=evidence.assess("dynamic",HEAD,receipt(),audit(),sockets(),same,same)
+        self.assertEqual(result["kafka_version"],"4.1.0")
+        self.assertEqual(result["java_runtime_version"],"21.0.8+9")
+        self.assertEqual(result["repo_digest"],"apache/kafka@sha256:bff074a5d0051dbc0bbbcd25b045bb1fe84833ec0d3c7c965d1797dd289ec88f")
+        self.assertEqual(result["platform"],"linux/amd64")
+
+    def test_runtime_provenance_missing_or_mismatched_fails_closed(self):
+        same=nodes(["172.22.0.11","172.22.0.12","172.22.0.13"])
+        missing=nodes(["172.22.0.11","172.22.0.12","172.22.0.13"])
+        missing["nodes"]["broker1"].pop("java_runtime_version")
+        with self.assertRaises(ValueError):
+            evidence.assess("dynamic",HEAD,receipt(),audit(),sockets(),missing,same)
+
+        changed=nodes(["172.22.0.11","172.22.0.12","172.22.0.13"],java_version="21.0.10+7")
+        with self.assertRaises(ValueError):
+            evidence.assess("dynamic",HEAD,receipt(),audit(),sockets(),same,changed)
+
+    def test_runtime_identity_must_match_across_all_brokers(self):
+        same=nodes(["172.22.0.11","172.22.0.12","172.22.0.13"])
+        same["nodes"]["broker2"]["java_runtime_version"]="21.0.10+7"
+        with self.assertRaises(ValueError):
+            evidence.assess("dynamic",HEAD,receipt(),audit(),sockets(),same,same)
+
+    def test_repo_digest_must_match_the_pinned_image_reference(self):
+        same=nodes(["172.22.0.11","172.22.0.12","172.22.0.13"])
+        same["nodes"]["broker3"]["repo_digest"]="apache/kafka@sha256:" + "c" * 64
+        with self.assertRaises(ValueError):
+            evidence.assess("dynamic",HEAD,receipt(),audit(),sockets(),same,same)
 
 if __name__=="__main__":
     unittest.main()
