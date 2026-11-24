@@ -15,8 +15,10 @@ import (
 const (
 	MaxDurableQueueCapacity = 1000000
 	MaxDurableReceiptCapacity = 2000000
+	MaxDurableDeliveryReceiptCapacity = 2000000
 	durableCapacityAdvisoryLock int64 = 0x47454e41494f4253
 	durableReceiptRetention = 24 * time.Hour
+	durableDeliveryReceiptRetention = 30 * 24 * time.Hour
 )
 
 var (
@@ -24,6 +26,7 @@ var (
 	ErrObservationConflict = errors.New("observation identity conflicts with a different projection")
 	ErrDurableLeaseLost = errors.New("durable observation lease lost or superseded")
 	ErrInvalidDurableConfig = errors.New("invalid durable observation store configuration")
+	ErrInvalidIdempotencyKey = errors.New("invalid observation idempotency key")
 )
 
 type Delivery struct {
@@ -95,11 +98,29 @@ func (s *DurableStore) Enqueue(ctx context.Context,o Observation) error {
 // EnqueueBatch is all-or-nothing. A transaction-scoped advisory lock serializes
 // capacity checks across replicas. Duplicate identities with equal projections
 // are idempotent; the same identity with different data is an integrity error.
-func (s *DurableStore) EnqueueBatch(ctx context.Context,observations []Observation) error {
+func (s *DurableStore) EnqueueBatch(ctx context.Context,observations []Observation)error {
+	return s.enqueueBatch(ctx,observations,"")
+}
+
+// EnqueueWithIdempotencyKey admits one observation and persists the receiver's
+// delivery key atomically with its natural identity receipt and queue row.
+func (s *DurableStore) EnqueueWithIdempotencyKey(ctx context.Context,o Observation,key string)error {
+	if !validIdempotencyKey(key) { return ErrInvalidIdempotencyKey }
+	return s.enqueueBatch(ctx,[]Observation{o},key)
+}
+
+func validIdempotencyKey(key string)bool {
+	return identifier(key,256)
+}
+
+func (s *DurableStore) enqueueBatch(ctx context.Context,observations []Observation,idempotencyKey string)error {
 	if err:=s.requireDB();err!=nil { return err }
 	if ctx==nil { return errors.New("context required") }
 	if len(observations)==0 { return nil }
-	if len(observations)>s.Capacity { return ErrDurableQueueFull }
+	if len(observations)>s.Capacity || (idempotencyKey!="" && len(observations)!=1) {
+		if idempotencyKey!="" { return ErrInvalidIdempotencyKey }
+		return ErrDurableQueueFull
+	}
 	type prepared struct { o Observation; hash string }
 	items:=make([]prepared,len(observations))
 	for i,o:=range observations {
@@ -112,9 +133,9 @@ func (s *DurableStore) EnqueueBatch(ctx context.Context,observations []Observati
 	if _,err=tx.ExecContext(ctx,"SELECT pg_advisory_xact_lock($1)",durableCapacityAdvisoryLock);err!=nil {
 		return fmt.Errorf("lock durable observation capacity: %w",err)
 	}
-	var queueCount,receiptCount,configuredCapacity int64
-	if err=tx.QueryRowContext(ctx,`SELECT queue_items,receipt_items,capacity_limit
-FROM genai_observation_queue_state WHERE singleton=true FOR UPDATE`).Scan(&queueCount,&receiptCount,&configuredCapacity);err!=nil {
+	var queueCount,receiptCount,deliveryReceiptCount,configuredCapacity int64
+	if err=tx.QueryRowContext(ctx,`SELECT queue_items,receipt_items,delivery_receipt_items,capacity_limit
+FROM genai_observation_queue_state WHERE singleton=true FOR UPDATE`).Scan(&queueCount,&receiptCount,&deliveryReceiptCount,&configuredCapacity);err!=nil {
 		return fmt.Errorf("lock durable observation counters: %w",err)
 	}
 	if configuredCapacity==0 {
@@ -131,9 +152,38 @@ FROM genai_observation_queue_state WHERE singleton=true FOR UPDATE`).Scan(&queue
 	if expireErr!=nil { return expireErr }
 	receiptCount-=expired
 	if receiptCount<0 { return errors.New("durable observation receipt counter is inconsistent") }
-	var queueAdded,receiptAdded int64
+
+	expiredDeliveryResult,expireDeliveryErr:=tx.ExecContext(ctx,"DELETE FROM genai_observation_delivery_receipts WHERE expires_at<=now()")
+	if expireDeliveryErr!=nil { return fmt.Errorf("expire delivery idempotency receipts: %w",expireDeliveryErr) }
+	expiredDelivery,expireDeliveryErr:=expiredDeliveryResult.RowsAffected()
+	if expireDeliveryErr!=nil { return expireDeliveryErr }
+	deliveryReceiptCount-=expiredDelivery
+	if deliveryReceiptCount<0 { return errors.New("durable delivery receipt counter is inconsistent") }
+
+	var queueAdded,receiptAdded,deliveryReceiptAdded int64
 	for _,item:=range items {
 		o:=item.o
+		if idempotencyKey!="" {
+			var receiptHash string
+			err=tx.QueryRowContext(ctx,`INSERT INTO genai_observation_delivery_receipts
+(tenant_id,idempotency_key,payload_hash,expires_at)
+VALUES($1,$2,$3,now()+($4::bigint*interval '1 millisecond'))
+ON CONFLICT(tenant_id,idempotency_key) DO NOTHING
+RETURNING payload_hash`,o.TenantID,idempotencyKey,item.hash,durableDeliveryReceiptRetention.Milliseconds()).Scan(&receiptHash)
+			if errors.Is(err,sql.ErrNoRows) {
+				if err=tx.QueryRowContext(ctx,`SELECT payload_hash FROM genai_observation_delivery_receipts
+WHERE tenant_id=$1 AND idempotency_key=$2 FOR SHARE`,o.TenantID,idempotencyKey).Scan(&receiptHash);err!=nil {
+					return fmt.Errorf("read delivery idempotency receipt: %w",err)
+				}
+				if strings.TrimSpace(receiptHash)!=item.hash { return ErrObservationConflict }
+				// This exact delivery was already accepted, even if its source row
+				// has since been ACKed and deleted.
+				continue
+			}
+			if err!=nil { return fmt.Errorf("write delivery idempotency receipt: %w",err) }
+			deliveryReceiptAdded++
+		}
+
 		var receiptHash string
 		err=tx.QueryRowContext(ctx,`INSERT INTO genai_observation_receipts(tenant_id,trace_id,span_id,payload_hash,expires_at)
 VALUES($1,$2,$3,$4,now()+($5::bigint*interval '1 millisecond'))
@@ -172,12 +222,15 @@ WHERE tenant_id=$1 AND trace_id=$2 AND span_id=$3 FOR SHARE`,o.TenantID,o.TraceI
 			if strings.TrimSpace(existing)!=item.hash { return ErrObservationConflict }
 		}
 	}
-	if queueCount+queueAdded>configuredCapacity || receiptCount+receiptAdded>MaxDurableReceiptCapacity {
+	if queueCount+queueAdded>configuredCapacity ||
+		receiptCount+receiptAdded>MaxDurableReceiptCapacity ||
+		deliveryReceiptCount+deliveryReceiptAdded>MaxDurableDeliveryReceiptCapacity {
 		return ErrDurableQueueFull
 	}
 	if _,err=tx.ExecContext(ctx,`UPDATE genai_observation_queue_state
-SET queue_items=$1,receipt_items=$2 WHERE singleton=true`,queueCount+queueAdded,receiptCount+receiptAdded);err!=nil {
-		return fmt.Errorf("update durable observation counters: %w",err)
+SET queue_items=$1,receipt_items=$2,delivery_receipt_items=$3 WHERE singleton=true`,
+		queueCount+queueAdded,receiptCount+receiptAdded,deliveryReceiptCount+deliveryReceiptAdded);err!=nil {
+		return fmt.Errorf("update durable queue counters: %w",err)
 	}
 	if err=tx.Commit();err!=nil { return fmt.Errorf("commit durable observation admission; retry same identities: %w",err) }
 	return nil

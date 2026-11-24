@@ -75,7 +75,8 @@ func TestM11RealCollectorFaultInjectionAndLedgerOutboxInvariance(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = db.Exec("DELETE FROM genai_observations WHERE tenant_id IN ($1, $2)", tenantA, tenantB)
 		_, _ = db.Exec("DELETE FROM genai_observation_receipts WHERE tenant_id IN ($1, $2)", tenantA, tenantB)
-		_, _ = db.Exec("UPDATE genai_observation_queue_state\nSET queue_items=(SELECT count(*) FROM genai_observations),\n    receipt_items=(SELECT count(*) FROM genai_observation_receipts),\n    capacity_limit=0\nWHERE singleton=true")
+		_, _ = db.Exec("DELETE FROM genai_observation_delivery_receipts WHERE tenant_id IN ($1, $2)", tenantA, tenantB)
+		_, _ = db.Exec("UPDATE genai_observation_queue_state\nSET queue_items=(SELECT count(*) FROM genai_observations),\n    receipt_items=(SELECT count(*) FROM genai_observation_receipts),\n    delivery_receipt_items=(SELECT count(*) FROM genai_observation_delivery_receipts),\n    capacity_limit=0\nWHERE singleton=true")
 	})
 
 	durableHandler, err := genaiobs.NewDurableOTLPHTTPHandler(

@@ -161,14 +161,35 @@ func (h *otlpHTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		otlpHTTPError(w, 503, "request canceled")
 		return
 	}
-	if err := h.admitter.AdmitBatch(r.Context(), scope, Version, spans); err != nil {
+	idempotencyHeaders := r.Header.Values("Idempotency-Key")
+	if len(idempotencyHeaders)>1 {
+		otlpHTTPError(w,http.StatusBadRequest,"invalid idempotency key")
+		return
+	}
+	var admitErr error
+	if len(idempotencyHeaders)==1 {
+		key:=idempotencyHeaders[0]
+		if !validIdempotencyKey(key) || len(spans)!=1 {
+			otlpHTTPError(w,http.StatusBadRequest,"invalid idempotency key")
+			return
+		}
+		idempotent,ok:=h.admitter.(IdempotentObservationAdmitter)
+		if !ok {
+			otlpHTTPError(w,http.StatusNotImplemented,"durable idempotency is not supported")
+			return
+		}
+		admitErr=idempotent.AdmitBatchWithIdempotencyKey(r.Context(),scope,Version,spans,key)
+	} else {
+		admitErr=h.admitter.AdmitBatch(r.Context(),scope,Version,spans)
+	}
+	if admitErr!=nil {
 		switch {
-		case errors.Is(err, ErrQueueFull), errors.Is(err, ErrDurableQueueFull):
+		case errors.Is(admitErr,ErrQueueFull),errors.Is(admitErr,ErrDurableQueueFull):
 			otlpHTTPOverload(w)
-		case errors.Is(err, ErrObservationConflict):
-			otlpHTTPError(w, http.StatusConflict, "observation identity conflict")
-		case errors.Is(err, ErrInvalid), errors.Is(err, ErrInvalidBatchSize), errors.Is(err, ErrUnsupportedVersion):
-			otlpHTTPError(w, http.StatusBadRequest, "invalid observation")
+		case errors.Is(admitErr,ErrObservationConflict):
+			otlpHTTPError(w,http.StatusConflict,"observation identity conflict")
+		case errors.Is(admitErr,ErrInvalid),errors.Is(admitErr,ErrInvalidBatchSize),errors.Is(admitErr,ErrUnsupportedVersion),errors.Is(admitErr,ErrInvalidIdempotencyKey):
+			otlpHTTPError(w,http.StatusBadRequest,"invalid observation")
 		default:
 			// Database and other backend failures are retryable service errors,
 			// never mislabeled as malformed client input.

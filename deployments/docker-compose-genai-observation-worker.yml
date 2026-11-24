@@ -1,0 +1,28 @@
+# Conservative local worker overlay. Not a production HA or SLO deployment.
+# Combine with deployments/docker-compose.yml. Receiver secrets must be
+# provided through the environment and must not be committed to the repository.
+services:
+  genai-observation-worker:
+    build:
+      context: ..
+      dockerfile: deployments/Dockerfile.genai-observation-worker
+    environment:
+      GENAI_OBSERVATION_DATABASE_URL: "${GENAI_OBSERVATION_DATABASE_URL:?set a PostgreSQL DSN reachable from this Compose network}"
+      GENAI_OBSERVATION_RECEIVER_URL: "${GENAI_OBSERVATION_RECEIVER_URL:?set an HTTPS OTLP receiver URL}"
+      GENAI_OBSERVATION_RECEIVER_TOKEN: "${GENAI_OBSERVATION_RECEIVER_TOKEN:?set a receiver bearer token}"
+      GENAI_OBSERVATION_METRICS_ADDR: ":9109"
+      GENAI_OBSERVATION_QUEUE_CAPACITY: "${GENAI_OBSERVATION_QUEUE_CAPACITY:-10000}"
+      GENAI_OBSERVATION_POLL_INTERVAL: "${GENAI_OBSERVATION_POLL_INTERVAL:-1s}"
+      GENAI_OBSERVATION_LEASE: "${GENAI_OBSERVATION_LEASE:-30s}"
+      GENAI_OBSERVATION_HTTP_TIMEOUT: "${GENAI_OBSERVATION_HTTP_TIMEOUT:-10s}"
+    ports:
+      - "127.0.0.1:19109:9109"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped

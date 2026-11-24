@@ -17,7 +17,7 @@ Refs #56. Migration 002 adds two tables that are deliberately independent of usa
 - Retry persists available_at and releases the lease. Restart does not reset retry schedule or attempts.
 - Permanent failures and exhausted attempts become terminal rows and are not automatically claimed. ListTerminal exposes failures scoped to one tenant; Tenant-scoped RetryFailed and DropFailed require both tenant ID and observation ID; mismatched tenants return the same not-found result. RetryFailed explicitly re-arms and resets attempts; DropFailed explicitly removes a terminal row. Receipts remain for their 24-hour replay window.
 - A process crash leaves its lease until expiry; a replacement worker can then reclaim the same row. Configure lease TTL longer than the exporter's request timeout. Expired in-flight work may be exported twice; consumers must use Delivery.IdempotencyKey and persist it to deduplicate.
-- DurableWorker passes a stable genaiobs/<observation_id> key to DurableExporter. This is an at-least-once contract, not exactly-once. The receiver's durable dedupe implementation and real collector fault injection remain M11.5.
+- M11.6 adds an HTTP DurableExporter and a receiver-persisted, tenant-scoped delivery-key receipt. See [M11.6 HTTP exporter and receiver idempotency](m11-durable-http-exporter.md). Delivery remains at-least-once, with duplicate suppression bounded by the 30-day key receipt window; this is not exactly-once.
 
 ## Bounds and loss semantics
 
