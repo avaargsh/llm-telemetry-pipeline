@@ -11,6 +11,7 @@ import ipaddress
 import json
 import os
 import pathlib
+import re
 import tempfile
 
 NODES = ("broker1","broker2","broker3")
@@ -20,6 +21,54 @@ MODES = {"pinned","dynamic","dynamic-ttl-zero"}
 def ensure(ok, reason):
     if not ok:
         raise ValueError(reason)
+
+
+def _runtime_identity(snapshot):
+    ensure(isinstance(snapshot, dict) and isinstance(snapshot.get("nodes"), dict),
+           "missing runtime identity snapshot")
+    nodes = snapshot["nodes"]
+    ensure(set(nodes) == set(NODES), "incomplete runtime identity membership")
+    identities = []
+    for name in NODES:
+        row = nodes[name]
+        ensure(isinstance(row, dict), "invalid runtime identity node")
+        image_ref = row.get("image_ref", "")
+        match = re.fullmatch(
+            r"apache/kafka:(\\d+\\.\\d+\\.\\d+)@sha256:([0-9a-f]{64})",
+            image_ref if isinstance(image_ref, str) else "")
+        ensure(match is not None, "Kafka image reference is not version-and-digest pinned")
+        kafka_version, digest = match.groups()
+        repo_digest = row.get("repo_digest", "")
+        ensure(repo_digest == "apache/kafka@sha256:" + digest,
+               "actual Docker repo digest differs from requested image digest")
+        image_id = row.get("image_id", "")
+        ensure(isinstance(image_id, str) and
+               re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is not None,
+               "missing Docker image ID")
+        platform = row.get("platform", "")
+        ensure(platform in {"linux/amd64", "linux/arm64"},
+               "missing or unsupported Docker image platform")
+        ensure(row.get("kafka_version") == kafka_version,
+               "Kafka binary version differs from pinned image tag")
+        java_runtime_version = row.get("java_runtime_version", "")
+        java_vendor = row.get("java_vendor", "")
+        java_vm_name = row.get("java_vm_name", "")
+        ensure(all(isinstance(value, str) and value for value in (
+            java_runtime_version, java_vendor, java_vm_name)),
+            "incomplete JDK runtime identity")
+        identities.append({
+            "image_ref": image_ref,
+            "repo_digest": repo_digest,
+            "image_id": image_id,
+            "platform": platform,
+            "kafka_version": kafka_version,
+            "java_runtime_version": java_runtime_version,
+            "java_vendor": java_vendor,
+            "java_vm_name": java_vm_name,
+        })
+    ensure(all(identity == identities[0] for identity in identities[1:]),
+           "Kafka image or JDK runtime identity differs across brokers")
+    return identities[0]
 
 
 def _ip_map(snapshot):
@@ -56,6 +105,9 @@ def observe(profile, head, audit, sockets, before, after):
            "missing real controller TCP connection evidence")
     ensure(type(sockets.get("sample_count")) is int and sockets["sample_count"]>=3,
            "too few socket samples")
+    runtime_before, runtime_after = _runtime_identity(before), _runtime_identity(after)
+    ensure(runtime_before == runtime_after,
+           "Kafka image or JDK runtime changed during the fault experiment")
     before_ips,after_ips=_ip_map(before),_ip_map(after)
     changed=sorted(n for n in NODES if before_ips[n]!=after_ips[n])
     audited_changes=audit.get("ip_changed_nodes")
@@ -101,6 +153,7 @@ def observe(profile, head, audit, sockets, before, after):
         exposure="NO_ADDRESS_CHANGE_OBSERVED"
     return {
         "schema_version":1, "exact_head":head, "profile":profile,
+        **runtime_before,
         "endpoint_exposure":exposure,
         "ip_changed_nodes":changed, "reassigned_addresses":reassigned,
         "cross_target_voter_request_count":count,
