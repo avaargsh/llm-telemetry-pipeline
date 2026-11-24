@@ -64,12 +64,12 @@ func parseDockerNetworkEndpoint(raw string) (string, string, []string, error) {
     return "", "", nil, fmt.Errorf("Docker network endpoint missing")
 }
 
-func dockerNetworkHasEndpoint(raw, network string) (bool, error) {
-    var networks map[string]json.RawMessage
-    if err := json.Unmarshal([]byte(raw), &networks); err != nil {
-        return false, fmt.Errorf("decode Docker network inspection: %w", err)
+func dockerNetworkHasContainer(raw, containerID string) (bool, error) {
+    var containers map[string]json.RawMessage
+    if err := json.Unmarshal([]byte(raw), &containers); err != nil {
+        return false, fmt.Errorf("decode Docker network membership: %w", err)
     }
-    _, ok := networks[network]
+    _, ok := containers[containerID]
     return ok, nil
 }
 
@@ -173,20 +173,27 @@ func haReassignDynamicBrokerEndpoints(t *testing.T, ctx context.Context, endpoin
     // engine. Disconnect it if the endpoint still exists; in either case
     // verify the old endpoint is gone before reserving its IPv4.
     for _, endpoint := range endpoints {
-        _, disconnectErr := haDockerCommand(ctx, "network", "disconnect", "-f", network, endpoint.containerID)
-        raw, inspectErr := haDockerCommand(ctx, "inspect", "--format", "{{json .NetworkSettings.Networks}}", endpoint.containerID)
+        raw, inspectErr := haDockerCommand(ctx, "network", "inspect", "--format", "{{json .Containers}}", network)
         if inspectErr != nil {
-            t.Fatalf("inspect detached %s: %v", endpoint.service, inspectErr)
+            t.Fatalf("inspect network %s before detaching %s: %v", network, endpoint.service, inspectErr)
         }
-        attached, parseErr := dockerNetworkHasEndpoint(raw, network)
+        attached, parseErr := dockerNetworkHasContainer(raw, endpoint.containerID)
         if parseErr != nil {
-            t.Fatalf("verify detached %s: %v", endpoint.service, parseErr)
+            t.Fatalf("verify network membership for %s: %v", endpoint.service, parseErr)
         }
         if attached {
-            if disconnectErr != nil {
-                t.Fatalf("disconnect %s from %s: %v", endpoint.service, network, disconnectErr)
+            haDocker(t, ctx, "network", "disconnect", "-f", network, endpoint.containerID)
+            raw, inspectErr = haDockerCommand(ctx, "network", "inspect", "--format", "{{json .Containers}}", network)
+            if inspectErr != nil {
+                t.Fatalf("inspect network %s after detaching %s: %v", network, endpoint.service, inspectErr)
             }
-            t.Fatalf("%s still attached to %s after disconnect", endpoint.service, network)
+            attached, parseErr = dockerNetworkHasContainer(raw, endpoint.containerID)
+            if parseErr != nil {
+                t.Fatalf("verify detached %s: %v", endpoint.service, parseErr)
+            }
+            if attached {
+                t.Fatalf("%s still attached to %s after disconnect", endpoint.service, network)
+            }
         }
     }
 
@@ -300,14 +307,14 @@ func TestDynamicNetworkProfile(t *testing.T) {
     }
 }
 
-func TestDockerNetworkHasEndpoint(t *testing.T) {
-    raw := "{\"network-a\":{\"IPAddress\":\"172.18.0.2\"}}"
-    attached, err := dockerNetworkHasEndpoint(raw, "network-a")
+func TestDockerNetworkHasContainer(t *testing.T) {
+    raw := "{\"container-a\":{\"Name\":\"broker2\"}}"
+    attached, err := dockerNetworkHasContainer(raw, "container-a")
     if err != nil || !attached {
-        t.Fatalf("expected endpoint attached, got attached=%v err=%v", attached, err)
+        t.Fatalf("expected container attached, got attached=%v err=%v", attached, err)
     }
-    attached, err = dockerNetworkHasEndpoint(raw, "network-b")
+    attached, err = dockerNetworkHasContainer(raw, "container-b")
     if err != nil || attached {
-        t.Fatalf("expected endpoint detached, got attached=%v err=%v", attached, err)
+        t.Fatalf("expected container detached, got attached=%v err=%v", attached, err)
     }
 }
