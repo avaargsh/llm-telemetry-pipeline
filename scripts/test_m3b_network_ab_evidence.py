@@ -34,6 +34,14 @@ def nodes(ips):
     return {"nodes": {f"broker{i}":{"container_ipv4":ip} for i,ip in enumerate(ips,1)}}
 
 class NetworkABContract(unittest.TestCase):
+    def test_non_string_ipv4_evidence_rejected(self):
+        for value in (2887122955, True, False):
+            malformed=nodes([value,"172.22.0.12","172.22.0.13"])
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                evidence.assess("dynamic",HEAD,receipt(),audit(),sockets(),malformed,malformed)
+        valid=nodes(["172.22.0.11","172.22.0.12","172.22.0.13"])
+        self.assertEqual(evidence.assess("dynamic",HEAD,receipt(),audit(),sockets(),valid,valid)["endpoint_exposure"],"NO_ADDRESS_CHANGE_OBSERVED")
+
     def test_dynamic_verdict_must_match_details(self):
         before=nodes(['172.22.0.11','172.22.0.12','172.22.0.13'])
         after=nodes(['172.22.0.11','172.22.0.13','172.22.0.12'])
