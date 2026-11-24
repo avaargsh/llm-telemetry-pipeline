@@ -65,6 +65,10 @@ func TestThreeBrokerParallelVoterRestart(t *testing.T) {
     if i!=keeper{stopped=append(stopped,fmt.Sprintf("broker%d",i));stoppedIDs=append(stoppedIDs,i)}
  }
  report["stopped_voter_ids"]=stoppedIDs
+ // Capture the original dynamic endpoints before stopping the two voters.
+ // The dynamic fault harness later reserves these addresses so Docker must
+ // assign new ones to the same broker containers without replacing volumes.
+ dynamicEndpoints:=haCaptureDynamicBrokerEndpoints(t,ctx,stopped)
  // Stop both voters, preserving every Kafka Docker named volume.
  haCompose(t,ctx,append([]string{"stop"},stopped...)...)
  t.Logf("two non-leader voters stopped; survivor broker%d; ACK must fail",keeper)
@@ -84,6 +88,12 @@ func TestThreeBrokerParallelVoterRestart(t *testing.T) {
  report["quorum_loss_probe_outcome"]="UNKNOWN_NO_ACK"
  t.Logf("during loss of quorum no ACK (outcome UNKNOWN): %T",writeErr)
 
+ // For dynamic profiles, reserve the old voter IPv4s and reconnect the
+ // same stopped broker containers with their service aliases. This forces
+ // real endpoint churn while preserving container IDs and Kafka volumes.
+ if len(dynamicEndpoints)>0 {
+    report["forced_dynamic_endpoint_reassignment"]=haReassignDynamicBrokerEndpoints(t,ctx,dynamicEndpoints)
+ }
  // Critically: ONE Docker compose start request with BOTH voters. No pause,
  // sequential ISR2 observation, delete, format or volume reset between them.
  restartStart:=time.Now()
