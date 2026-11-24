@@ -13,6 +13,9 @@ on:
       - "scripts/m3b_kraft_audit.py"
       - "deployments/docker-compose-ha.yml"
   workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   parallel-voter-restart:
     name: real-parallel-two-voter-restart-trial-${{ matrix.trial }}

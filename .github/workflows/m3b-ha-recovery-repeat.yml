@@ -11,6 +11,9 @@ on:
       - "scripts/test_m3b_kraft_audit.py"
       - "deployments/docker-compose-ha.yml"
   workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   recovery-trial:
     name: independent-kraft-recovery-trial-${{ matrix.trial }}
