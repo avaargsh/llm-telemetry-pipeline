@@ -198,7 +198,7 @@ def load_trial_receipts(directory, expected_trials=3):
         artifact_dir = next((parent for parent in path.parents
                              if parent.name in expected_artifacts), None)
         require(artifact_dir is not None, "comparison receipt is outside a named trial artifact")
-        match = re.fullmatch(r"m3b-kafka-version-(4\\.1\\.[02])-trial-(\\d+)",
+        match = re.fullmatch(r"m3b-kafka-version-(4\.1\.[02])-trial-(\d+)",
                              artifact_dir.name)
         require(match is not None, "invalid Kafka version trial artifact name")
         version, trial = match.group(1), int(match.group(2))
