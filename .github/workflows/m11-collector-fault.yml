@@ -134,7 +134,9 @@ jobs:
       - name: Atomic receipt expiry counters, rollback, underflow and concurrent admission (M11.8)
         env:
           TEST_POSTGRES_DSN: postgres://telemetry:localdev-only@localhost:15432/telemetry?sslmode=disable
-        run: go test -race -count=1 -v -run '^TestDurableStore(DirectReceiptExpiryUpdatesCounters|ReceiptExpiryFailsClosedOnCounterUnderflow|ReceiptExpirySerializesWithAdmission)        env:
+        run: go test -race -count=1 -v -run '^TestDurableStore(DirectReceiptExpiryUpdatesCounters|ReceiptExpiryFailsClosedOnCounterUnderflow|ReceiptExpirySerializesWithAdmission)$' ./internal/genaiobs
+      - name: Durable HTTP exporter → receiver ACK-loss and worker-replacement test
+        env:
           TEST_POSTGRES_DSN: postgres://telemetry:localdev-only@localhost:15432/telemetry?sslmode=disable
         run: go test -race -count=1 -v -run '^TestM11DurableHTTPExporterReceiverPersistsKeyAcrossAckLoss$' ./internal/ledger
       - name: Sender and receiver independent PostgreSQL database ACK-loss recovery
