@@ -184,5 +184,18 @@ user.name = runner
         findings = diagnostics.assess(nodes)
         self.assertIn("broker2: actual repo digest differs from requested image digest", findings)
 
+
+    def test_all_kraft_compose_profiles_keep_pinned_default_and_support_override(self):
+        root = pathlib.Path(__file__).resolve().parent.parent
+        pinned = "apache/kafka:4.1.0@sha256:bff074a5d0051dbc0bbbcd25b045bb1fe84833ec0d3c7c965d1797dd289ec88f"
+        for relative in (
+            "deployments/docker-compose-ha.yml",
+            "deployments/docker-compose-ha-dynamic.yml",
+            "deployments/docker-compose-ha-dns-ttl-zero.yml",
+        ):
+            source = (root / relative).read_text(encoding="utf-8")
+            with self.subTest(path=relative):
+                self.assertEqual(source.count('image: "${M3B_KAFKA_IMAGE:-' + pinned + '}"'), 3)
+
 if __name__ == "__main__":
     unittest.main()
