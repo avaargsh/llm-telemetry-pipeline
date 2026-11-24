@@ -57,8 +57,18 @@ func TestDurableStoreIdempotencyKeyReceiptSemantics(t *testing.T) {
 	if err != nil || len(claimed) != 1 {
 		t.Fatalf("claim=%d err=%v", len(claimed), err)
 	}
-	if claimed[0].IdempotencyKey() != key {
-		t.Fatalf("unexpected stable key: %q", claimed[0].IdempotencyKey())
+	// The receiver's queue row gets its own downstream delivery identity;
+	// the inbound source key is retained separately in the delivery receipt.
+	wantDownstreamKey := fmt.Sprintf("genaiobs/%d", claimed[0].ID)
+	if claimed[0].IdempotencyKey() != wantDownstreamKey {
+		t.Fatalf("unexpected downstream key: got %q want %q", claimed[0].IdempotencyKey(), wantDownstreamKey)
+	}
+	var storedKey string
+	if err := store.DB.QueryRowContext(ctx, "SELECT idempotency_key FROM genai_observation_delivery_receipts WHERE tenant_id=$1 AND idempotency_key=$2", tenant, key).Scan(&storedKey); err != nil {
+		t.Fatal(err)
+	}
+	if storedKey != key {
+		t.Fatalf("receiver did not preserve inbound key: got %q want %q", storedKey, key)
 	}
 	if err := store.Ack(ctx, claimed[0], "worker-key-receipt"); err != nil {
 		t.Fatal(err)
