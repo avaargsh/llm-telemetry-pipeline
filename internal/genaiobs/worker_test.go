@@ -3,6 +3,7 @@ package genaiobs
 import (
 	"context"
 	"errors"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -90,6 +91,9 @@ func TestWorkerPermanentAndRetryPolicyValidation(t *testing.T) {
 		{MaxAttempts:1,InitialBackoff:2*time.Second,MaxBackoff:time.Second},
 		{MaxAttempts:1,InitialBackoff:time.Second,MaxBackoff:time.Hour+time.Second},
 		{MaxAttempts:1,InitialBackoff:time.Second,MaxBackoff:time.Second,Jitter:0.51},
+		{MaxAttempts:1,InitialBackoff:time.Second,MaxBackoff:time.Second,Jitter:math.NaN()},
+		{MaxAttempts:1,InitialBackoff:time.Second,MaxBackoff:time.Second,Jitter:math.Inf(1)},
+		{MaxAttempts:1,InitialBackoff:time.Second,MaxBackoff:time.Second,Jitter:math.Inf(-1)},
 	} {
 		if w,err:=NewWorker(q,exp,p);err==nil||w!=nil {t.Fatalf("invalid policy accepted: %+v",p)}
 	}
@@ -117,4 +121,31 @@ func TestWorkerSerializesQueueLeaseAcrossWorkers(t *testing.T) {
 	if exp.calls()!=1 {t.Fatal("second worker bypassed queue lease")}
 	if err=w1.Close();err!=nil{t.Fatal(err)}
 	if delivered,err:=w2.RunOnce(context.Background());!delivered||err!=nil{t.Fatalf("released lease: %v %v",delivered,err)}
+}
+
+type workerMutatingExporter struct {
+	calls int
+	seen []int64
+}
+func (e *workerMutatingExporter) Export(_ context.Context,o Observation) error {
+	e.calls++
+	if o.InputTokens!=nil {
+		e.seen=append(e.seen,*o.InputTokens)
+		*o.InputTokens=999
+	}
+	if e.calls==1 { return errors.New("temporary") }
+	return nil
+}
+func TestWorkerExporterCannotMutateRetainedRetryPayload(t *testing.T) {
+	q:=workerTestQueue(t)
+	exp:=&workerMutatingExporter{}
+	w,err:=NewWorker(q,exp,workerTestPolicy())
+	if err!=nil { t.Fatal(err) }
+	now:=time.Now()
+	w.now=func()time.Time{return now}
+	if _,err=w.RunOnce(context.Background());!errors.Is(err,ErrRetryScheduled) { t.Fatal(err) }
+	now=now.Add(time.Second)
+	if delivered,err:=w.RunOnce(context.Background());!delivered||err!=nil { t.Fatalf("%v %v",delivered,err) }
+	if len(exp.seen)!=2||exp.seen[0]!=17||exp.seen[1]!=17 { t.Fatalf("retry payload mutated: %v",exp.seen) }
+	if q.Len()!=0 { t.Fatal("successful retry did not ACK") }
 }

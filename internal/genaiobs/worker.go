@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"sync"
 	"time"
@@ -41,7 +42,7 @@ func DefaultRetryPolicy() RetryPolicy {
 
 func (p RetryPolicy) validate() error {
 	if p.MaxAttempts<1 || p.MaxAttempts>20 || p.InitialBackoff<time.Millisecond ||
-		p.MaxBackoff<p.InitialBackoff || p.MaxBackoff>time.Hour || p.Jitter<0 || p.Jitter>0.5 {
+		p.MaxBackoff<p.InitialBackoff || p.MaxBackoff>time.Hour || p.Jitter<0 || p.Jitter>0.5 || math.IsNaN(p.Jitter) || math.IsInf(p.Jitter,0) {
 		return ErrInvalidRetryPolicy
 	}
 	return nil
