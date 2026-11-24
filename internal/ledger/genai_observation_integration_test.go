@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -61,12 +62,17 @@ func TestGenAIObservationsDoNotChangeLedger(t *testing.T) {
 	db := testDB(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	const tenantA = "ledger-m10-tenant-a"
-	const tenantB = "ledger-m10-tenant-b"
+	tenantSuffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	tenantA := "ledger-m10-tenant-a-" + tenantSuffix
+	tenantB := "ledger-m10-tenant-b-" + tenantSuffix
 	store := Store{DB: db}
-	first := freshEvent(t, "ledger-m10-a")
-	second := freshEvent(t, "ledger-m10-b")
+	first := freshEvent(t, "genai-observation-invariance-"+tenantSuffix+"-a")
+	second := freshEvent(t, "genai-observation-invariance-"+tenantSuffix+"-b")
 	first.TenantID, second.TenantID = tenantA, tenantB
+	// Keep these fixtures outside testDB\x27s broad ledger-% cleanup prefix so a
+	// concurrent package-level integration test cannot delete the snapshot rows.
+	first.RequestID = "genai-observation-invariance-" + tenantSuffix + "-a"
+	second.RequestID = "genai-observation-invariance-" + tenantSuffix + "-b"
 	if err := first.Seal(); err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +277,7 @@ func TestGenAIObservationsDoNotChangeLedger(t *testing.T) {
 			t.Fatal(err)
 		}
 		scope := genaiobs.Scope{TenantID: tenantB}
-		const wire = `{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"0123456789ABCDEF0123456789ABCDEF","spanId":"0123456789ABCDEF","status":{"code":1},"attributes":[{"key":"gen_ai.provider.name","value":{"stringValue":"openai"}},{"key":"gen_ai.operation.name","value":{"stringValue":"chat"}},{"key":"gen_ai.usage.input_tokens","value":{"intValue":"9007199254740993"}},{"key":"gen_ai.usage.output_tokens","value":{"intValue":0}},{"key":"tenant.id","value":{"stringValue":"ledger-m10-tenant-a"}},{"key":"gen_ai.input.messages","value":{"stringValue":"discard-me"}}]}]}]}]}`
+		wire := strings.Replace(`{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"0123456789ABCDEF0123456789ABCDEF","spanId":"0123456789ABCDEF","status":{"code":1},"attributes":[{"key":"gen_ai.provider.name","value":{"stringValue":"openai"}},{"key":"gen_ai.operation.name","value":{"stringValue":"chat"}},{"key":"gen_ai.usage.input_tokens","value":{"intValue":"9007199254740993"}},{"key":"gen_ai.usage.output_tokens","value":{"intValue":0}},{"key":"tenant.id","value":{"stringValue":"ledger-m10-tenant-a"}},{"key":"gen_ai.input.messages","value":{"stringValue":"discard-me"}}]}]}]}]}`, `"ledger-m10-tenant-a"`, `"`+tenantA+`"`, 1)
 		for _, body := range [][]byte{
 			[]byte(strings.Replace(wire, `"code":1`, `"code":1,"code":2`, 1)),
 			[]byte(strings.Replace(wire, `"intValue":"9007199254740993"`, `"intValue":"-1"`, 1)),
