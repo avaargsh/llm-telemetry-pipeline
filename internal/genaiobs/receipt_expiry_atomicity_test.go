@@ -3,9 +3,12 @@ package genaiobs
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Exercise the granted SQL capability independently of EnqueueBatch. Calling
@@ -131,8 +134,20 @@ func TestDurableStoreDirectReceiptExpiryUpdatesCounters(t *testing.T) {
 		t.Fatal(err)
 	}
 	expireFixture()
+	var beforeNatural, beforeDelivery int64
+	if err := db.QueryRowContext(ctx, "SELECT receipt_items, delivery_receipt_items FROM public.genai_observation_queue_state WHERE singleton=true").Scan(&beforeNatural, &beforeDelivery); err != nil {
+		t.Fatal(err)
+	}
+	expireFixture()
 	if err := store.EnqueueWithIdempotencyKey(ctx, o, key); err != nil {
 		t.Fatalf("enqueue with same-transaction expiry: %v", err)
+	}
+	var afterNatural, afterDelivery int64
+	if err := db.QueryRowContext(ctx, "SELECT receipt_items, delivery_receipt_items FROM public.genai_observation_queue_state WHERE singleton=true").Scan(&afterNatural, &afterDelivery); err != nil {
+		t.Fatal(err)
+	}
+	if afterNatural != beforeNatural || afterDelivery != beforeDelivery {
+		t.Fatalf("old writer absolute counter update drifted: before=%d/%d after=%d/%d", beforeNatural, beforeDelivery, afterNatural, afterDelivery)
 	}
 	assertGlobalReceiptCountersMatchRows(t, db)
 }
@@ -140,13 +155,14 @@ func TestDurableStoreDirectReceiptExpiryUpdatesCounters(t *testing.T) {
 func assertGlobalReceiptCountersMatchRows(t *testing.T, db *sql.DB) {
 	t.Helper()
 	var naturalRows, deliveryRows, naturalCount, deliveryCount int64
-	if err := db.QueryRow("SELECT count(*) FROM public.genai_observation_receipts").Scan(&naturalRows); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.QueryRow("SELECT count(*) FROM public.genai_observation_delivery_receipts").Scan(&deliveryRows); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.QueryRow("SELECT receipt_items, delivery_receipt_items FROM public.genai_observation_queue_state WHERE singleton=true").Scan(&naturalCount, &deliveryCount); err != nil {
+	err := db.QueryRow(`
+SELECT s.receipt_items,
+       (SELECT count(*) FROM public.genai_observation_receipts),
+       s.delivery_receipt_items,
+       (SELECT count(*) FROM public.genai_observation_delivery_receipts)
+FROM public.genai_observation_queue_state s
+WHERE s.singleton = TRUE`).Scan(&naturalCount, &naturalRows, &deliveryCount, &deliveryRows)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if naturalCount != naturalRows || deliveryCount != deliveryRows {
@@ -180,23 +196,53 @@ func TestDurableStoreReceiptExpiryFailsClosedOnCounterUnderflow(t *testing.T) {
 	store, db := openDurableTestStore(t, 8)
 	tenant := fmt.Sprintf("durable-test-expiry-underflow-%d", time.Now().UnixNano())
 	seedExpiredReceiptFixture(t, store, db, tenant, "b123456789abcdef0123456789abcdef", "underflow-key")
-	if _, err := db.Exec("UPDATE public.genai_observation_queue_state SET receipt_items=0, delivery_receipt_items=0 WHERE singleton=true"); err != nil {
+
+	// Corrupt counters only inside this transaction. The row lock prevents
+	// other writers from observing the fixture, and rollback restores state.
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	tx, err := db.BeginTx(context.Background(), nil)
-	if err != nil { t.Fatal(err) }
-	if _, err := tx.Exec("SET LOCAL ROLE llm_telemetry_observation_receiver"); err != nil { t.Fatal(err) }
+	if _, err := tx.Exec("SELECT receipt_items FROM public.genai_observation_queue_state WHERE singleton=true FOR UPDATE"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec("UPDATE public.genai_observation_queue_state SET receipt_items=0, delivery_receipt_items=0 WHERE singleton=true"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec("SAVEPOINT before_expiry_attempt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec("SET LOCAL ROLE llm_telemetry_observation_receiver"); err != nil {
+		t.Fatal(err)
+	}
 	var natural, delivery int64
 	err = tx.QueryRow("SELECT expired_receipts,expired_delivery_receipts FROM public.expire_genai_observation_receipts()").Scan(&natural, &delivery)
-	if err == nil {
-		t.Fatalf("counter underflow must fail closed, function returned %d/%d", natural, delivery)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
+		_ = tx.Rollback()
+		t.Fatalf("counter underflow must fail with SQLSTATE 23514, got %v", err)
 	}
-	_ = tx.Rollback()
-	var naturalRows, deliveryRows int64
-	if err := db.QueryRow("SELECT count(*) FROM public.genai_observation_receipts WHERE tenant_id=$1", tenant).Scan(&naturalRows); err != nil { t.Fatal(err) }
-	if err := db.QueryRow("SELECT count(*) FROM public.genai_observation_delivery_receipts WHERE tenant_id=$1", tenant).Scan(&deliveryRows); err != nil { t.Fatal(err) }
-	if naturalRows != 1 || deliveryRows != 1 {
-		t.Fatalf("underflow failure deleted receipts: natural=%d delivery=%d", naturalRows, deliveryRows)
+	if _, err := tx.Exec("ROLLBACK TO SAVEPOINT before_expiry_attempt"); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	var naturalRows, deliveryRows, naturalCount, deliveryCount int64
+	if err := tx.QueryRow(`
+SELECT
+  (SELECT count(*) FROM public.genai_observation_receipts WHERE tenant_id=$1),
+  (SELECT count(*) FROM public.genai_observation_delivery_receipts WHERE tenant_id=$1),
+  receipt_items,
+  delivery_receipt_items
+FROM public.genai_observation_queue_state WHERE singleton=true`, tenant).Scan(&naturalRows, &deliveryRows, &naturalCount, &deliveryCount); err != nil {
+		_ = tx.Rollback()
+		t.Fatal(err)
+	}
+	if naturalRows != 1 || deliveryRows != 1 || naturalCount != 0 || deliveryCount != 0 {
+		_ = tx.Rollback()
+		t.Fatalf("underflow attempt was not rolled back atomically: rows=%d/%d counters=%d/%d", naturalRows, deliveryRows, naturalCount, deliveryCount)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
 	}
 }
 
