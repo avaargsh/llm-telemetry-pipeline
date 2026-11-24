@@ -242,6 +242,11 @@ func (s *DurableStore) Ack(ctx context.Context,d Delivery,worker string)error {
 	if d.ID<1 || d.Attempts<1 || !identifier(worker,128) { return ErrDurableLeaseLost }
 	tx,err:=s.DB.BeginTx(ctx,nil);if err!=nil { return err }
 	defer tx.Rollback()
+	// Keep the same state-row -> observation-row lock order as EnqueueBatch.
+	var queueItems int64
+	if err=tx.QueryRowContext(ctx,"SELECT queue_items FROM genai_observation_queue_state WHERE singleton=true FOR UPDATE").Scan(&queueItems);err!=nil {
+		return fmt.Errorf("lock durable queue counter for ACK: %w",err)
+	}
 	result,err:=tx.ExecContext(ctx,`DELETE FROM genai_observations
 WHERE observation_id=$1 AND lease_owner=$2 AND attempts=$3 AND lease_until>now() AND terminal_at IS NULL`,d.ID,worker,d.Attempts)
 	if err!=nil { return fmt.Errorf("ack durable observation: %w",err) }
@@ -316,6 +321,11 @@ func (s *DurableStore) DropFailed(ctx context.Context,id int64)(Observation,erro
 	if ctx==nil || id<1 { return Observation{},ErrNoFailedObservation }
 	tx,err:=s.DB.BeginTx(ctx,nil);if err!=nil { return Observation{},err }
 	defer tx.Rollback()
+	// Keep the same state-row -> observation-row lock order as EnqueueBatch.
+	var queueItems int64
+	if err=tx.QueryRowContext(ctx,"SELECT queue_items FROM genai_observation_queue_state WHERE singleton=true FOR UPDATE").Scan(&queueItems);err!=nil {
+		return Observation{},fmt.Errorf("lock durable queue counter for terminal drop: %w",err)
+	}
 	d,err:=scanDelivery(tx.QueryRowContext(ctx,`DELETE FROM genai_observations
 WHERE observation_id=$1 AND terminal_at IS NOT NULL
 RETURNING observation_id,schema_version,tenant_id,trace_id,span_id,request_id,attempt_id,
