@@ -190,7 +190,7 @@ def load_trial_receipts(directory, expected_trials=3):
             "expected one comparison receipt from each Kafka-version trial artifact")
     reports = {}
     for path in files:
-        match = re.fullmatch(r"m3b-kafka-version-(4\\.1\\.[02])-trial-(\\d+)",
+        match = re.fullmatch(r"m3b-kafka-version-(4\.1\.[02])-trial-(\d+)",
                              path.parent.name)
         require(match is not None, "invalid Kafka version trial artifact name")
         version, trial = match.group(1), int(match.group(2))
