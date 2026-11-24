@@ -121,3 +121,30 @@ func TestNewHandlerRejectsWeakOrDuplicateCredentials(t *testing.T){
     }
     if _,err:=NewHandler(nil,[]Credential{{Token:testToken,TenantID:"tenant_001",ProjectID:"project_001"}});err==nil{t.Fatal("accepted nil store")}
 }
+
+
+func TestIngestRejectsAmbiguousJSONFields(t *testing.T) {
+    e := sampleEvent(t)
+    raw := toJSON(t, e)
+    for _, tc := range []struct{name, prefix string}{
+        {"duplicate-tenant", `"tenant_id":"other-tenant",`},
+        {"duplicate-token-count", `"prompt_tokens":999999,`},
+        {"case-folded-alias", `"TENANT_ID":"other-tenant",`},
+        {"escaped-key-alias", `"tenant_\u0069d":"other-tenant",`},
+        {"same-value-duplicate", `"tenant_id":"tenant_001",`},
+    } {
+        t.Run(tc.name,func(t *testing.T){
+            s := &fakeRecorder{}
+            body := append([]byte("{"+tc.prefix),raw[1:]...)
+            rr := send(t,newTestHandler(t,s),body,testToken,http.MethodPost)
+            if rr.Code != http.StatusBadRequest || s.calls != 0 {
+                t.Fatalf("ambiguous input accepted: status=%d calls=%d body=%s",rr.Code,s.calls,rr.Body.String())
+            }
+        })
+    }
+    s := &fakeRecorder{}
+    rr := send(t,newTestHandler(t,s),append([]byte(" \n"),raw...),testToken,http.MethodPost)
+    if rr.Code != http.StatusCreated || s.calls != 1 {
+        t.Fatalf("unambiguous input rejected: status=%d calls=%d",rr.Code,s.calls)
+    }
+}
