@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"os"
 	"testing"
 	"time"
@@ -119,4 +122,39 @@ func TestDurableWorkerUsesPersistentAttemptCountAndStableDeliveryID(t *testing.T
 	delivered,err:=w.RunOnce(context.Background())
 	if delivered||!errors.Is(err,ErrRetryExhausted)||repo.terminal!="retry_exhausted" { t.Fatalf("delivered=%v err=%v terminal=%q",delivered,err,repo.terminal) }
 	if len(exp.seen)!=1||exp.seen[0].ID!=77||exp.seen[0].IdempotencyKey()!="genaiobs/77" { t.Fatalf("unstable delivery identity: %+v",exp.seen) }
+}
+
+func TestDurableOTLPHTTPAdmissionSurvivesWorkerRestart(t *testing.T) {
+	store,db:=openDurableTestStore(t,8)
+	tenant:=fmt.Sprintf("durable-test-%d",time.Now().UnixNano())
+	const token="durable-test-http-token-0123456789abcdef"
+	handler,err:=NewDurableOTLPHTTPHandler(store,[]OTLPCredential{{Token:token,TenantID:tenant}},2)
+	if err!=nil { t.Fatal(err) }
+	server:=httptest.NewTLSServer(handler)
+	defer server.Close()
+	client:=server.Client()
+	const wire=`{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"6123456789abcdef0123456789abcdef","spanId":"0123456789abcdef","status":{"code":1},"attributes":[{"key":"gen_ai.provider.name","value":{"stringValue":"openai"}},{"key":"gen_ai.operation.name","value":{"stringValue":"chat"}},{"key":"gen_ai.usage.input_tokens","value":{"intValue":"7"}}]}]}]}]}`
+	post:=func() int {
+		t.Helper()
+		req,err:=http.NewRequest(http.MethodPost,server.URL+"/v1/traces",strings.NewReader(wire))
+		if err!=nil { t.Fatal(err) }
+		req.Header.Set("Content-Type","application/json")
+		req.Header.Set("Authorization","Bearer "+token)
+		resp,err:=client.Do(req);if err!=nil { t.Fatal(err) }
+		defer resp.Body.Close()
+		return resp.StatusCode
+	}
+	if status:=post();status!=http.StatusOK { t.Fatalf("durable admission status=%d",status) }
+	// A fresh store object models a replacement process using the same database.
+	restarted,err:=NewDurableStore(db,8);if err!=nil { t.Fatal(err) }
+	rows,err:=restarted.Claim(context.Background(),"replacement-worker",time.Minute,1)
+	if err!=nil||len(rows)!=1 { t.Fatalf("recovered rows=%d err=%v",len(rows),err) }
+	if rows[0].Observation.TenantID!=tenant||rows[0].Observation.InputTokens==nil||*rows[0].Observation.InputTokens!=7 {
+		t.Fatalf("recovered wrong trusted projection: %+v",rows[0])
+	}
+	if err:=restarted.Ack(context.Background(),rows[0],"replacement-worker");err!=nil { t.Fatal(err) }
+	// Replaying the same authenticated OTLP span is accepted idempotently but
+	// does not recreate the already-ACKed queue row within the receipt window.
+	if status:=post();status!=http.StatusOK { t.Fatalf("replay admission status=%d",status) }
+	if n,err:=restarted.Len(context.Background());err!=nil||n!=0 { t.Fatalf("replay recreated queue row: %d %v",n,err) }
 }
