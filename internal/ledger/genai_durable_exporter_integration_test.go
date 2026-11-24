@@ -25,6 +25,7 @@ func TestM11DurableHTTPExporterReceiverPersistsKeyAcrossAckLoss(t *testing.T) {
 	tenantB := "ledger-m11-6-b-" + suffix
 
 	authoritative := Store{DB: db}
+	seedEventIDs := make([]string, 2)
 	for i, tenant := range []string{tenantA, tenantB} {
 		seed := freshEvent(t, fmt.Sprintf("ledger-m11-6-seed-%d-%s", i, suffix))
 		seed.TenantID = tenant
@@ -32,11 +33,12 @@ func TestM11DurableHTTPExporterReceiverPersistsKeyAcrossAckLoss(t *testing.T) {
 		if err := seed.Seal(); err != nil {
 			t.Fatal(err)
 		}
+		seedEventIDs[i] = seed.EventID
 		if outcome, err := authoritative.Record(ctx, seed); err != nil || outcome != Created {
 			t.Fatalf("seed authoritative ledger event: outcome=%s err=%v", outcome, err)
 		}
 	}
-	before := genAIUsageSnapshot(t, ctx, db, tenantA, tenantB)
+	before := genAIUsageSnapshot(t, ctx, db, seedEventIDs[0], seedEventIDs[1])
 	durable, err := genaiobs.NewDurableStore(db, 8)
 	if err != nil {
 		t.Fatal(err)
@@ -187,7 +189,7 @@ WHERE singleton=true`)
 	if queued != 0 {
 		t.Fatalf("ACKed queue still contains %d rows", queued)
 	}
-	if after := genAIUsageSnapshot(t, ctx, db, tenantA, tenantB); after != before {
+	if after := genAIUsageSnapshot(t, ctx, db, seedEventIDs[0], seedEventIDs[1]); after != before {
 		t.Fatal("durable HTTP exporter/receiver changed authoritative Ledger or Outbox rows")
 	}
 }
