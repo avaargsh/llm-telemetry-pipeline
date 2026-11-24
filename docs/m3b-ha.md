@@ -256,6 +256,19 @@ cat /tmp/m3b-kraft-diagnostics/voter-identity-audit.json
 
 The snapshot uses `getent hosts` *inside* the Kafka containers, which
 does **not** reveal the Kafka JVM's potentially cached resolved addresses.
+It also runs `java -XshowSettings:properties -version` inside each live broker
+container and persists only an allowlist of bounded runtime fields:
+`java.vendor`, `java.version`, `java.runtime.version`, `java.vm.name`,
+`java.vm.vendor`, `java.vm.version`, and `os.arch`. Raw command output and
+unrelated Java properties are not written to the receipt. Missing fields or
+different runtime identities across brokers fail the identity gate. Combined
+with the digest-qualified Kafka image reference and Docker image ID, this
+makes the tested Kafka/JDK runtime reproducible. It does not inspect the
+already-running broker JVM's DNS cache or establish a DNS-cache root cause.
+A future Kafka 4.1.x comparison must retain the same fault sequence and all
+RF3/ISR3, no-ACK, identity, and 35/35 ACK-readback gates while changing only
+the digest-qualified Kafka image profile.
+
 A bounded log tail can also miss older events. Therefore
 `NO_MISMATCH_OBSERVED` means only that **this measured window** showed no
 cross-target mismatch; it is not a root-cause exclusion or production HA

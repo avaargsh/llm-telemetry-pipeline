@@ -18,6 +18,10 @@ import tempfile
 NODES = ("broker1", "broker2", "broker3")
 KAFKA_IMAGE_REF = "apache/kafka:4.1.0@sha256:bff074a5d0051dbc0bbbcd25b045bb1fe84833ec0d3c7c965d1797dd289ec88f"
 META_KEYS = frozenset(("node.id", "cluster.id", "directory.id"))
+JAVA_RUNTIME_KEYS = frozenset((
+    "java.vendor", "java.version", "java.runtime.version",
+    "java.vm.name", "java.vm.vendor", "java.vm.version", "os.arch",
+))
 QUORUM_KEYS = frozenset(("ClusterId", "LeaderId", "LeaderEpoch",
                          "HighWatermark", "CurrentVoters", "CurrentObservers",
                          "MaxFollowerLag", "MaxFollowerLagTimeMs"))
@@ -30,6 +34,19 @@ def parse_properties(raw):
         key, sep, value = line.partition("=")
         if sep and key.strip() in META_KEYS:
             parsed[key.strip()] = value.strip()
+    return parsed
+
+
+def parse_java_properties(raw):
+    """Return only bounded, allowlisted Java runtime identity properties."""
+    parsed = {}
+    for line in raw.splitlines():
+        key, sep, value = line.partition("=")
+        key = key.strip()
+        value = value.strip()
+        if (sep and key in JAVA_RUNTIME_KEYS and value and len(value) <= 128
+                and all(ord(char) >= 32 for char in value)):
+            parsed[key] = value
     return parsed
 
 
@@ -49,6 +66,7 @@ def assess(nodes):
     cluster = None
     directory_seen = set()
     image_ids = set()
+    java_runtime_ids = set()
     for name in NODES:
         n = nodes.get(name, {})
         expected = int(name[-1])
@@ -75,6 +93,14 @@ def assess(nodes):
             findings.append(f"{name}: missing Docker image ID")
         else:
             image_ids.add(image_id)
+        java_runtime = n.get("java_runtime")
+        if (not isinstance(java_runtime, dict)
+                or not all(isinstance(java_runtime.get(key), str)
+                           and java_runtime[key].strip()
+                           for key in JAVA_RUNTIME_KEYS)):
+            findings.append(f"{name}: missing or incomplete Java runtime identity")
+        else:
+            java_runtime_ids.add(tuple(java_runtime[key] for key in sorted(JAVA_RUNTIME_KEYS)))
         for destination in NODES:
             resolved = n.get("dns_from_node", {}).get(destination, "")
             if not resolved:
@@ -83,6 +109,8 @@ def assess(nodes):
                 findings.append(f"{name}: dns {destination} does not match container IPv4")
     if len(image_ids) > 1:
         findings.append("Kafka image IDs differ across brokers")
+    if len(java_runtime_ids) > 1:
+        findings.append("Java runtime identities differ across brokers")
     return findings
 
 
@@ -133,6 +161,27 @@ def container_image_identity(service):
     return image_ref, image_id, ""
 
 
+def java_runtime_identity(service):
+    """Read sanitized JVM properties from the running broker container."""
+    try:
+        proc = subprocess.run(
+            [*COMPOSE, "exec", "-T", service, "java",
+             "-XshowSettings:properties", "-version"],
+            capture_output=True, text=True, errors="replace",
+            check=False, timeout=8,
+        )
+        if proc.returncode != 0:
+            return {}, "exit_nonzero"
+        identity = parse_java_properties(proc.stdout + "\n" + proc.stderr)
+        if not all(identity.get(key) for key in JAVA_RUNTIME_KEYS):
+            return identity, "missing_runtime_properties"
+        return identity, ""
+    except subprocess.TimeoutExpired:
+        return {}, "timeout"
+    except OSError:
+        return {}, "launch_failure"
+
+
 def run_context():
     return {
         "exact_head": os.getenv("M3B_EXACT_HEAD", ""),
@@ -152,6 +201,9 @@ def snapshot(phase):
         n["image_ref"], n["image_id"], err = container_image_identity(node)
         if err:
             n["errors"].append("image_identity:" + err)
+        n["java_runtime"], err = java_runtime_identity(node)
+        if err:
+            n["errors"].append("java_runtime:" + err)
         meta, err = command([*COMPOSE, "exec", "-T", node,
                              "cat", "/tmp/kraft-combined-logs/meta.properties"])
         n["meta"] = parse_properties(meta)
@@ -234,6 +286,7 @@ def main():
                 "docker_ipv4": node["container_ipv4"],
                 "kafka_image_ref": node["image_ref"],
                 "docker_image_id": node["image_id"],
+                "java_runtime": node["java_runtime"],
                 "persisted_node_id": node["meta"].get("node.id"),
                 "directory_id": node["meta"].get("directory.id"),
                 "quorum_leader_id": node["quorum"].get("LeaderId"),
