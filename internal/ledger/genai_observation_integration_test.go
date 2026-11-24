@@ -38,16 +38,15 @@ SELECT jsonb_build_object(
   'ledger', COALESCE((
     SELECT jsonb_agg(to_jsonb(l) ORDER BY l.event_id)
     FROM usage_ledger l
-    WHERE l.tenant_id IN ($1, $2) OR l.request_id LIKE 'ledger-m10-%'
+    WHERE l.tenant_id IN ($1, $2)
   ), '[]'::jsonb),
   'outbox', COALESCE((
     SELECT jsonb_agg(to_jsonb(o) ORDER BY o.event_id)
     FROM event_outbox o
     WHERE o.event_payload->>'tenant_id' IN ($1, $2)
-       OR o.event_payload->>'request_id' LIKE 'ledger-m10-%'
        OR o.event_id IN (
          SELECT event_id FROM usage_ledger
-         WHERE tenant_id IN ($1, $2) OR request_id LIKE 'ledger-m10-%'
+         WHERE tenant_id IN ($1, $2)
        )
   ), '[]'::jsonb)
 )::text`
