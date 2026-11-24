@@ -35,7 +35,8 @@ func openDurableTestStore(t *testing.T, capacity int) (*DurableStore,*sql.DB) {
 		_,_=db.Exec("DELETE FROM genai_observation_receipts WHERE tenant_id LIKE 'durable-test-%'")
 		_,_=db.Exec(`UPDATE genai_observation_queue_state
 SET queue_items=(SELECT count(*) FROM genai_observations),
-    receipt_items=(SELECT count(*) FROM genai_observation_receipts)
+    receipt_items=(SELECT count(*) FROM genai_observation_receipts),
+    capacity_limit=0
 WHERE singleton=true`)
 		_ = db.Close()
 	})
@@ -51,6 +52,10 @@ func TestDurableStoreAdmissionIsBoundedAtomicAndIdempotent(t *testing.T) {
 	if err:=store.EnqueueBatch(ctx,[]Observation{a,b});err!=nil { t.Fatal(err) }
 	if err:=store.EnqueueBatch(ctx,[]Observation{a,b});err!=nil { t.Fatalf("idempotent replay: %v",err) }
 	if n,err:=store.Len(ctx);err!=nil||n!=2 { t.Fatalf("len=%d err=%v",n,err) }
+	var queueItems,receiptItems,capacity int64
+	if err:=store.DB.QueryRowContext(ctx,"SELECT queue_items,receipt_items,capacity_limit FROM genai_observation_queue_state WHERE singleton=true").Scan(&queueItems,&receiptItems,&capacity);err!=nil || queueItems!=2 || receiptItems!=2 || capacity!=2 {
+		t.Fatalf("counter state queue=%d receipts=%d capacity=%d err=%v",queueItems,receiptItems,capacity,err)
+	}
 	conflict:=a;changed:=int64(999);conflict.InputTokens=&changed
 	if err:=store.Enqueue(ctx,conflict);!errors.Is(err,ErrObservationConflict) { t.Fatalf("conflicting identity: %v",err) }
 	if err:=store.EnqueueBatch(ctx,[]Observation{c});!errors.Is(err,ErrDurableQueueFull) { t.Fatalf("expected full queue: %v",err) }
@@ -72,6 +77,10 @@ func TestDurableStoreLeaseFencingRestartRecoveryAndAckReceipt(t *testing.T) {
 	if err:=store.Ack(ctx,first[0],"worker-a");!errors.Is(err,ErrDurableLeaseLost) { t.Fatalf("stale ACK not fenced: %v",err) }
 	if err:=store.Ack(ctx,second[0],"worker-b");err!=nil { t.Fatal(err) }
 	if n,err:=store.Len(ctx);err!=nil||n!=0 { t.Fatalf("ACK did not remove row: %d %v",n,err) }
+	var queueItems,receiptItems int64
+	if err:=store.DB.QueryRowContext(ctx,"SELECT queue_items,receipt_items FROM genai_observation_queue_state WHERE singleton=true").Scan(&queueItems,&receiptItems);err!=nil || queueItems!=0 || receiptItems!=1 {
+		t.Fatalf("ACK counter state queue=%d receipts=%d err=%v",queueItems,receiptItems,err)
+	}
 	// The 24-hour receipt prevents an acknowledged OTLP replay from being re-enqueued.
 	if err:=store.Enqueue(ctx,o);err!=nil { t.Fatal(err) }
 	if n,err:=store.Len(ctx);err!=nil||n!=0 { t.Fatalf("ACK receipt did not deduplicate replay: %d %v",n,err) }
