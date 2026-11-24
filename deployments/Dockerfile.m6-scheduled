@@ -1,9 +1,10 @@
 # Standalone read-only reconciliation CronJob runtime. Build and publish your
 # own digest-pinned image; this Dockerfile does not publish any image.
-FROM golang:1.23.12-bookworm AS build
+FROM golang:1.27.4-bookworm AS build
+ENV GOTOOLCHAIN=local
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN go mod download && go mod verify
+RUN test "$(go env GOVERSION)" = go1.27.4 && go mod download && go mod verify
 COPY cmd ./cmd
 COPY internal ./internal
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/reconciler ./cmd/reconciler

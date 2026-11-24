@@ -1,8 +1,6 @@
 module github.com/avaargsh/llm-telemetry-pipeline
 
-go 1.23.0
-
-toolchain go1.23.12
+go 1.27.4
 
 require (
 	github.com/jackc/pgx/v5 v5.7.6
