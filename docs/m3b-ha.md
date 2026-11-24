@@ -435,3 +435,10 @@ verified. No production IPAM, HA SLO or Apache Kafka defect claims.
 ## Repeated network-control exposure evidence
 
 The network A/B workflow runs three independent jobs per profile (six total), with trial-specific artifacts. The comparator reports `endpoint_exposure` independently of verified recovery: `PINNED_CONTROL`, `NO_ADDRESS_CHANGE_OBSERVED`, `ADDRESS_CHANGE_WITHOUT_REASSIGNMENT`, or `ADDRESS_REASSIGNMENT_OBSERVED`. The last category requires a previously owned IPv4 address to be observed under another broker after recovery. Before/after snapshots cannot establish when a transient address changed or prove JVM cache causality. No observed change is an unexposed trial, not a falsification of the endpoint-reassignment hypothesis. All existing RF3/ISR3, no-ACK and sealed-event readback gates remain mandatory. Missing or malformed drift observations fail closed. This is a bounded observational repeat, not a forced IP reassignment experiment or a production SLO. Issue #28 remains open.
+
+
+## Experimental positive DNS cache TTL treatment (not production)
+
+The stacked experimental profile `deployments/docker-compose-ha-dns-ttl-zero.yml` changes only positive Java DNS caching policy relative to the dynamic-address control, besides the isolated Compose project and mounted policy file. Before the fault and after verified recovery, each broker must have the startup option and its mounted policy present; a separate JVM in the same container must report `networkaddress.cache.ttl=0` through `-XshowSettings:security:properties`. This checks policy loading in the image and startup configuration, **not** the internal cache state of the live broker JVM.
+
+The TTL verdict requires the normal recovery receipt, 35 ACKed identities, zero observed wrong-target votes, and a structurally consistent IPv4 reassignment record. Unexposed recovery is inconclusive. This does not prove root cause, production recovery, or a permanent mitigation. Preserve the original untreated RED trials; never suppress their failure. All new experiments require hosted exact-head verification.
