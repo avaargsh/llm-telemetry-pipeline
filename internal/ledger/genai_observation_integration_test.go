@@ -15,6 +15,18 @@ import (
 	"github.com/avaargsh/llm-telemetry-pipeline/internal/genaiobs"
 )
 
+type genAIWorkerTestExporter struct {
+	results []error
+	seen []genaiobs.Observation
+}
+func (e *genAIWorkerTestExporter) Export(_ context.Context,o genaiobs.Observation) error {
+	e.seen=append(e.seen,o)
+	if len(e.results)==0 { return nil }
+	err:=e.results[0]
+	e.results=e.results[1:]
+	return err
+}
+
 // Compare full authoritative rows, not just counts: a changed token total,
 // digest, event identity or outbox payload must also fail this assertion.
 // Restrict the snapshot to the two isolated test tenants and request prefix
