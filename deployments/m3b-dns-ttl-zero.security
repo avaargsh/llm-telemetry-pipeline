@@ -1,0 +1,2 @@
+# Disposable counterfactual only; append to default Java security policy.
+networkaddress.cache.ttl=0
