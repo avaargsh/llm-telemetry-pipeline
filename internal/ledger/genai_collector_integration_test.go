@@ -49,6 +49,7 @@ func TestM11RealCollectorFaultInjectionAndLedgerOutboxInvariance(t *testing.T) {
 	tenantB := "ledger-m11-b-" + suffix
 
 	authoritative := Store{DB: db}
+	seedEventIDs := make([]string, 2)
 	for i, tenant := range []string{tenantA, tenantB} {
 		seed := freshEvent(t, fmt.Sprintf("ledger-m11-collector-seed-%d-%s", i, suffix))
 		seed.TenantID = tenant
@@ -56,14 +57,15 @@ func TestM11RealCollectorFaultInjectionAndLedgerOutboxInvariance(t *testing.T) {
 		if err := seed.Seal(); err != nil {
 			t.Fatal(err)
 		}
+		seedEventIDs[i] = seed.EventID
 		if outcome, err := authoritative.Record(ctx, seed); err != nil || outcome != Created {
 			t.Fatalf("seed authoritative ledger event: outcome=%s err=%v", outcome, err)
 		}
 	}
-	before := genAIUsageSnapshot(t, ctx, db, tenantA, tenantB)
+	before := genAIUsageSnapshot(t, ctx, db, seedEventIDs[0], seedEventIDs[1])
 	assertLedgerInvariant := func(stage string) {
 		t.Helper()
-		if got := genAIUsageSnapshot(t, ctx, db, tenantA, tenantB); got != before {
+		if got := genAIUsageSnapshot(t, ctx, db, seedEventIDs[0], seedEventIDs[1]); got != before {
 			t.Fatalf("GenAI collector stage %q changed authoritative Ledger/Outbox rows", stage)
 		}
 	}
