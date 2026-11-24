@@ -11,6 +11,7 @@ on:
       - "scripts/m3b_kraft_diagnostics.py"
       - "scripts/m3b_kraft_audit.py"
       - "scripts/m3b_controller_sockets.py"
+      - "!.github/workflows/**"
   workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
