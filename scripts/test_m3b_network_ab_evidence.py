@@ -34,6 +34,7 @@ class NetworkABContract(unittest.TestCase):
         result=evidence.assess("pinned",HEAD,receipt(),audit(),sockets(),nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]),nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]))
         self.assertEqual(result["result"],"RECOVERY_VERIFIED_ENDPOINTS_FIXED")
         self.assertEqual(result["reassigned_addresses"],[])
+        self.assertEqual(result["endpoint_exposure"],"PINNED_CONTROL")
 
     def test_dynamic_swapped_ipv4_is_observed_not_suppressed(self):
         a=audit()
@@ -43,6 +44,7 @@ class NetworkABContract(unittest.TestCase):
         result=evidence.assess("dynamic",HEAD,receipt(),a,sockets(),before,after)
         self.assertEqual(result["result"],"RECOVERY_VERIFIED_ENDPOINTS_DYNAMIC_OBSERVED")
         self.assertEqual(len(result["reassigned_addresses"]),2)
+        self.assertEqual(result["endpoint_exposure"],"ADDRESS_REASSIGNMENT_OBSERVED")
         self.assertIn({"ipv4":"172.22.0.12","before_owner":"broker2","after_owner":"broker3"},result["reassigned_addresses"])
 
     def test_audited_cross_target_voter_requests_are_not_hidden(self):
@@ -73,6 +75,31 @@ class NetworkABContract(unittest.TestCase):
         bad=sockets();bad["result"]="INCOMPLETE"
         with self.assertRaises(ValueError):
             evidence.assess("dynamic",HEAD,receipt(),audit(),bad,nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]),nodes(["1.1.1.1","1.1.1.2","1.1.1.3"]))
+
+
+    def test_dynamic_unchanged_addresses_are_not_causal_exposure(self):
+        same=nodes(["172.22.0.11","172.22.0.12","172.22.0.13"])
+        result=evidence.assess("dynamic",HEAD,receipt(),audit(),sockets(),same,same)
+        self.assertEqual(result["endpoint_exposure"],"NO_ADDRESS_CHANGE_OBSERVED")
+        self.assertFalse(result["causal_root_cause_proven"])
+
+    def test_dynamic_new_address_without_reassignment_is_distinct(self):
+        a=audit()
+        a.update(ip_changed_nodes=["broker2"],verdict="CONTAINER_ENDPOINT_DRIFT_OBSERVED")
+        result=evidence.assess("dynamic",HEAD,receipt(),a,sockets(),
+                               nodes(["172.22.0.11","172.22.0.12","172.22.0.13"]),
+                               nodes(["172.22.0.11","172.22.0.14","172.22.0.13"]))
+        self.assertEqual(result["endpoint_exposure"],"ADDRESS_CHANGE_WITHOUT_REASSIGNMENT")
+        self.assertEqual(result["reassigned_addresses"],[])
+        self.assertFalse(result["causal_root_cause_proven"])
+
+    def test_missing_or_invalid_ip_change_evidence_rejected(self):
+        for value in (None, "", {}, ["broker2","broker2"]):
+            a=audit()
+            a["ip_changed_nodes"]=value
+            same=nodes(["172.22.0.11","172.22.0.12","172.22.0.13"])
+            with self.subTest(value=value),self.assertRaises(ValueError):
+                evidence.assess("dynamic",HEAD,receipt(),a,sockets(),same,same)
 
     def test_unbound_head_and_malformed_mode_fail(self):
         for profile,head in (("dynamic","UNBOUND"),("fixed",HEAD),("random",HEAD)):
