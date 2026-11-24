@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 profile="${M3B_NETWORK_AB_MODE:-pinned}"
 compose_file="${M3B_HA_COMPOSE_FILE:-deployments/docker-compose-ha.yml}"
 case "$profile:$compose_file" in
-  pinned:deployments/docker-compose-ha.yml|dynamic:deployments/docker-compose-ha-dynamic.yml|dynamic-ttl-zero:deployments/docker-compose-ha-dns-ttl-zero.yml) ;;
+  pinned:deployments/docker-compose-ha.yml|pinned:deployments/docker-compose-ha-4.1.2.yml|dynamic:deployments/docker-compose-ha-dynamic.yml|dynamic-ttl-zero:deployments/docker-compose-ha-dns-ttl-zero.yml) ;;
   *) echo "invalid A/B control: $profile:$compose_file" >&2; exit 2 ;;
 esac
 export M3B_HA_COMPOSE_FILE="$compose_file"
