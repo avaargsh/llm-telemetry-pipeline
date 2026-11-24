@@ -69,7 +69,7 @@ func TestGenAIObservationsDoNotChangeLedger(t *testing.T) {
 		}
 	}
 	before := genAIUsageSnapshot(t, ctx, db, tenantA, tenantB)
-	unchanged := func() {
+	unchanged := func(t *testing.T) {
 		t.Helper()
 		if got := genAIUsageSnapshot(t, ctx, db, tenantA, tenantB); got != before {
 			t.Fatal("GenAI observation changed authoritative ledger/outbox rows")
@@ -86,7 +86,7 @@ func TestGenAIObservationsDoNotChangeLedger(t *testing.T) {
 			{Key: "gen_ai.operation.name", Value: "chat"},
 		},
 	}
-	observe := func(scope string, span genaiobs.Span) genaiobs.Observation {
+	observe := func(t *testing.T, scope string, span genaiobs.Span) genaiobs.Observation {
 		t.Helper()
 		o, err := genaiobs.NormalizeInference(genaiobs.Scope{TenantID: scope}, genaiobs.Version, span)
 		if err != nil || o.TenantID != scope {
@@ -95,15 +95,15 @@ func TestGenAIObservationsDoNotChangeLedger(t *testing.T) {
 		if _, err := json.Marshal(o); err != nil {
 			t.Fatal(err)
 		}
-		unchanged()
+		unchanged(t)
 		return o
 	}
 	t.Run("sampled out no projection", func(t *testing.T) {
 		// Deliberately do not call the adapter: no span was sampled.
-		unchanged()
+		unchanged(t)
 	})
 	t.Run("missing usage", func(t *testing.T) {
-		o := observe(tenantA, base)
+		o := observe(t, tenantA, base)
 		if o.InputTokens != nil || o.OutputTokens != nil {
 			t.Fatal("missing usage was invented")
 		}
@@ -114,20 +114,20 @@ func TestGenAIObservationsDoNotChangeLedger(t *testing.T) {
 			genaiobs.Attribute{Key: "gen_ai.usage.input_tokens", Value: int64(999999)},
 			genaiobs.Attribute{Key: "gen_ai.usage.output_tokens", Value: int64(0)})
 		for i := 0; i < 3; i++ {
-			o := observe(tenantA, s)
+			o := observe(t, tenantA, s)
 			if o.InputTokens == nil || *o.InputTokens != 999999 || o.OutputTokens == nil || *o.OutputTokens != 0 {
 				t.Fatal("observation token projection differs")
 			}
 		}
 		s.AttemptID = "attempt-2"
-		observe(tenantA, s)
+		observe(t, tenantA, s)
 	})
 	t.Run("unfinalized request and spoofed tenant", func(t *testing.T) {
 		s := base
 		s.RequestID = "ledger-m10-never-finalized"
 		s.Attributes = append(append([]genaiobs.Attribute(nil), base.Attributes...),
 			genaiobs.Attribute{Key: "tenant.id", Value: tenantA})
-		observe(tenantB, s)
+		observe(t, tenantB, s)
 	})
 	t.Run("rejected observation", func(t *testing.T) {
 		s := base
@@ -136,11 +136,11 @@ func TestGenAIObservationsDoNotChangeLedger(t *testing.T) {
 		if _, err := genaiobs.NormalizeInference(genaiobs.Scope{TenantID: tenantA}, genaiobs.Version, s); err != genaiobs.ErrInvalid {
 			t.Fatalf("expected invalid observation: %v", err)
 		}
-		unchanged()
+		unchanged(t)
 	})
 	// The authoritative retry remains a duplicate with exactly the same rows.
 	if result, err := store.Record(ctx, first); err != nil || result != Duplicate {
 		t.Fatalf("authoritative retry changed semantics: %v %v", result, err)
 	}
-	unchanged()
+	unchanged(t)
 }
