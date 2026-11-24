@@ -104,7 +104,7 @@ func TestDurableStoreRetryTerminalAndExplicitOperatorActions(t *testing.T) {
 	if next,err:=store.Claim(ctx,"worker-c",time.Minute,1);err!=nil||len(next)!=0 { t.Fatalf("terminal row auto-claimed: %d %v",len(next),err) }
 	// Terminal operator actions must be scoped to the owning tenant.
 	if err:=store.RetryFailed(ctx,"another-tenant",second[0].ID);!errors.Is(err,ErrNoFailedObservation) { t.Fatalf("cross-tenant retry must be hidden: %v",err) }
-	if err:=store.DropFailed(ctx,"another-tenant",second[0].ID);!errors.Is(err,ErrNoFailedObservation) { t.Fatalf("cross-tenant drop must be hidden: %v",err) }
+	if _,err:=store.DropFailed(ctx,"another-tenant",second[0].ID);!errors.Is(err,ErrNoFailedObservation) { t.Fatalf("cross-tenant drop must be hidden: %v",err) }
 	if stillTerminal,err:=store.ListTerminal(ctx,tenant,10);err!=nil||len(stillTerminal)!=1 { t.Fatalf("cross-tenant action changed owner row: %+v %v",stillTerminal,err) }
 	if err:=store.RetryFailed(ctx,tenant,second[0].ID);err!=nil { t.Fatal(err) }
 	third,err:=store.Claim(ctx,"worker-c",time.Minute,1);if err!=nil||len(third)!=1||third[0].Attempts!=1 { t.Fatalf("manual retry did not reset: %+v %v",third,err) }
