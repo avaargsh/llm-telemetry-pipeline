@@ -19,7 +19,6 @@ on:
       - "deployments/docker-compose.yml"
       - "go.mod"
       - "go.sum"
-      - "!.github/workflows/**"
   workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}

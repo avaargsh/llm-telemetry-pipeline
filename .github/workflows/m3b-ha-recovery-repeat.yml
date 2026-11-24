@@ -10,7 +10,6 @@ on:
       - "scripts/m3b_kraft_audit.py"
       - "scripts/test_m3b_kraft_audit.py"
       - "deployments/docker-compose-ha.yml"
-      - "!.github/workflows/**"
   workflow_dispatch:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
