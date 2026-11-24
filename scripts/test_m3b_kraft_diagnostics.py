@@ -77,7 +77,23 @@ other-secret=never-print
         nodes = {f"broker{i}": node(i, f"172.22.0.{i+10}") for i in (1, 2, 3)}
         nodes["broker2"]["image_ref"] = "apache/kafka:4.1.0"
         findings = diagnostics.assess(nodes)
-        self.assertIn("broker2: Kafka image reference differs from pinned digest", findings)
+        self.assertIn("broker2: Kafka image reference differs from expected digest-qualified image", findings)
+
+    def test_expected_image_ref_accepts_versioned_digest_override(self):
+        candidate = "apache/kafka:4.1.2@sha256:" + "b" * 64
+        with patch.dict(os.environ, {"M3B_EXPECTED_KAFKA_IMAGE_REF": candidate}):
+            self.assertEqual(diagnostics.expected_kafka_image_ref(), candidate)
+            nodes = {f"broker{i}": node(i, f"172.22.0.{i+10}") for i in (1, 2, 3)}
+            for row in nodes.values():
+                row["image_ref"] = candidate
+            self.assertEqual(diagnostics.assess(nodes), [])
+
+    def test_expected_image_ref_rejects_mutable_or_malformed_values(self):
+        for value in ("apache/kafka:4.1.2", "apache/kafka:4.1.2@sha256:" + "B" * 64):
+            with self.subTest(value=value), patch.dict(os.environ, {"M3B_EXPECTED_KAFKA_IMAGE_REF": value}):
+                self.assertEqual(diagnostics.expected_kafka_image_ref(), "")
+                nodes = {f"broker{i}": node(i, f"172.22.0.{i+10}") for i in (1, 2, 3)}
+                self.assertIn("missing or invalid expected Kafka image reference", diagnostics.assess(nodes))
 
     def test_missing_runtime_image_id_fails_closed(self):
         nodes = {f"broker{i}": node(i, f"172.22.0.{i+10}") for i in (1, 2, 3)}
