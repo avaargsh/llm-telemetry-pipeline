@@ -305,20 +305,20 @@ WHERE observation_id=$1 AND lease_owner=$2 AND attempts=$3 AND lease_until>now()
 	return nil
 }
 
-func (s *DurableStore) RetryFailed(ctx context.Context,id int64)error {
+func (s *DurableStore) RetryFailed(ctx context.Context,tenant string,id int64)error {
 	if err:=s.requireDB();err!=nil { return err }
-	if ctx==nil || id<1 { return ErrNoFailedObservation }
+	if ctx==nil || !identifier(tenant,128) || id<1 { return ErrNoFailedObservation }
 	result,err:=s.DB.ExecContext(ctx,`UPDATE genai_observations
 SET terminal_at=NULL,terminal_reason=NULL,attempts=0,available_at=now(),last_error=NULL,lease_owner=NULL,lease_until=NULL
-WHERE observation_id=$1 AND terminal_at IS NOT NULL`,id)
+WHERE tenant_id=$1 AND observation_id=$2 AND terminal_at IS NOT NULL`,tenant,id)
 	if err!=nil { return fmt.Errorf("re-arm terminal observation: %w",err) }
 	n,err:=result.RowsAffected();if err!=nil { return err };if n!=1 { return ErrNoFailedObservation }
 	return nil
 }
 
-func (s *DurableStore) DropFailed(ctx context.Context,id int64)(Observation,error) {
+func (s *DurableStore) DropFailed(ctx context.Context,tenant string,id int64)(Observation,error) {
 	if err:=s.requireDB();err!=nil { return Observation{},err }
-	if ctx==nil || id<1 { return Observation{},ErrNoFailedObservation }
+	if ctx==nil || !identifier(tenant,128) || id<1 { return Observation{},ErrNoFailedObservation }
 	tx,err:=s.DB.BeginTx(ctx,nil);if err!=nil { return Observation{},err }
 	defer tx.Rollback()
 	// Keep the same state-row -> observation-row lock order as EnqueueBatch.
@@ -327,7 +327,7 @@ func (s *DurableStore) DropFailed(ctx context.Context,id int64)(Observation,erro
 		return Observation{},fmt.Errorf("lock durable queue counter for terminal drop: %w",err)
 	}
 	d,err:=scanDelivery(tx.QueryRowContext(ctx,`DELETE FROM genai_observations
-WHERE observation_id=$1 AND terminal_at IS NOT NULL
+WHERE tenant_id=$1 AND observation_id=$2 AND terminal_at IS NOT NULL
 RETURNING observation_id,schema_version,tenant_id,trace_id,span_id,request_id,attempt_id,
  provider,operation,request_model,response_model,status,input_tokens,output_tokens,attempts,now()`,id))
 	if errors.Is(err,sql.ErrNoRows) { return Observation{},ErrNoFailedObservation }

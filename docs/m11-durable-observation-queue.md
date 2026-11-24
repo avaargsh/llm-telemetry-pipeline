@@ -15,7 +15,7 @@ Refs #56. Migration 002 adds two tables that are deliberately independent of usa
 - Claim uses FOR UPDATE SKIP LOCKED and a persisted lease. Every claim increments attempts, which is also the fencing generation.
 - ACK deletes only the current, unexpired lease generation. A stale worker cannot ACK after lease takeover.
 - Retry persists available_at and releases the lease. Restart does not reset retry schedule or attempts.
-- Permanent failures and exhausted attempts become terminal rows and are not automatically claimed. ListTerminal exposes failures scoped to one tenant; RetryFailed explicitly re-arms and resets attempts; DropFailed explicitly removes a terminal row. Receipts remain for their 24-hour replay window.
+- Permanent failures and exhausted attempts become terminal rows and are not automatically claimed. ListTerminal exposes failures scoped to one tenant; Tenant-scoped RetryFailed and DropFailed require both tenant ID and observation ID; mismatched tenants return the same not-found result. RetryFailed explicitly re-arms and resets attempts; DropFailed explicitly removes a terminal row. Receipts remain for their 24-hour replay window.
 - A process crash leaves its lease until expiry; a replacement worker can then reclaim the same row. Configure lease TTL longer than the exporter's request timeout. Expired in-flight work may be exported twice; consumers must use Delivery.IdempotencyKey and persist it to deduplicate.
 - DurableWorker passes a stable genaiobs/<observation_id> key to DurableExporter. This is an at-least-once contract, not exactly-once. The receiver's durable dedupe implementation and real collector fault injection remain M11.5.
 
