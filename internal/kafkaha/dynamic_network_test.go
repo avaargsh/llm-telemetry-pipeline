@@ -63,13 +63,33 @@ func parseDockerNetworkEndpoint(raw string) (string, string, []string, error) {
     return "", "", nil, fmt.Errorf("Docker network endpoint missing")
 }
 
-func dockerNetworkHasContainer(raw, containerID string) (bool, error) {
-    var containers map[string]json.RawMessage
-    if err := json.Unmarshal([]byte(raw), &containers); err != nil {
-        return false, fmt.Errorf("decode Docker network membership: %w", err)
+// Inspect the stopped container's configured networks, not the active
+// network endpoint table: stopped containers may retain network configuration.
+func configuredNetworkAttachment(raw, network string) (bool, error) {
+    var networks map[string]json.RawMessage
+    if err := json.Unmarshal([]byte(raw), &networks); err != nil {
+        return false, fmt.Errorf("decode configured networks: %w", err)
     }
-    _, ok := containers[containerID]
-    return ok, nil
+    if len(networks) == 0 { return false, nil }
+    if len(networks) != 1 { return false, fmt.Errorf("expected at most one configured network") }
+    if _, ok := networks[network]; !ok { return false, fmt.Errorf("unexpected configured network") }
+    return true, nil
+}
+
+func TestStoppedEndpointAttachment(t *testing.T) {
+    for _, c := range []struct { name, raw string; want, invalid bool }{
+        {"stopped configured without live endpoint", `{"lab":{"EndpointID":"","IPAddress":""}}`, true, false},
+        {"active endpoint", `{"lab":{"EndpointID":"abc","IPAddress":"172.29.242.2"}}`, true, false},
+        {"detached", `{}`, false, false},
+        {"null", `null`, false, false},
+        {"wrong network", `{"other":{}}`, false, true},
+        {"malformed", `{`, false, true},
+    } {
+        t.Run(c.name, func(t *testing.T) {
+            got, err := configuredNetworkAttachment(c.raw, "lab")
+            if got != c.want || (err != nil) != c.invalid { t.Fatalf("got %v %v", got, err) }
+        })
+    }
 }
 
 func dynamicNetworkProfile(composeFile string) bool {
@@ -175,22 +195,20 @@ func haReassignDynamicBrokerEndpoints(t *testing.T, ctx context.Context, endpoin
             t.Fatalf("inconsistent captured Docker endpoint for %s", endpoint.service)
         }
     }
-    // A stopped Docker container may already have been detached by the
-    // engine. Disconnect it if the endpoint still exists.
+    // Stopping a container can remove it from docker network inspect's
+    // active Containers table while retaining its endpoint configuration.
+    // Remove that configuration before requesting an explicit swapped IP.
     for _, endpoint := range endpoints {
-        raw, inspectErr := haDockerCommand(ctx, "network", "inspect", "--format", "{{json .Containers}}", network)
-        if inspectErr != nil {
-            t.Fatalf("inspect network %s before detaching %s: %v", network, endpoint.service, inspectErr)
-        }
-        attached, parseErr := dockerNetworkHasContainer(raw, endpoint.containerID)
-        if parseErr != nil {
-            t.Fatalf("verify network membership for %s: %v", endpoint.service, parseErr)
-        }
+        raw := haDocker(t, ctx, "inspect", "--format", "{{json .NetworkSettings.Networks}}", endpoint.containerID)
+        attached, err := configuredNetworkAttachment(raw, network)
+        if err != nil { t.Fatalf("inspect configured network for %s: %v", endpoint.service, err) }
         if attached {
             haDocker(t, ctx, "network", "disconnect", "-f", network, endpoint.containerID)
         }
+        raw = haDocker(t, ctx, "inspect", "--format", "{{json .NetworkSettings.Networks}}", endpoint.containerID)
+        attached, err = configuredNetworkAttachment(raw, network)
+        if err != nil || attached { t.Fatalf("stale configured network for %s after detach: attached=%v err=%v", endpoint.service, attached, err) }
     }
-
 
     // Use the other stopped voter's address, not a fresh address. The
     // explicitly configured bridge subnet permits Docker --ip assignments.
@@ -199,6 +217,15 @@ func haReassignDynamicBrokerEndpoints(t *testing.T, ctx context.Context, endpoin
         for _, alias := range endpoint.aliases { args = append(args, "--alias", alias) }
         args = append(args, network, endpoint.containerID)
         haDocker(t, ctx, args...)
+        raw := haDocker(t, ctx, "inspect", "--format", "{{json .NetworkSettings.Networks}}", endpoint.containerID)
+        var configured map[string]struct {
+            IPAMConfig *struct { IPv4Address string }
+        }
+        if err := json.Unmarshal([]byte(raw), &configured); err != nil { t.Fatal(err) }
+        config, ok := configured[network]
+        if !ok || len(configured) != 1 || config.IPAMConfig == nil || config.IPAMConfig.IPv4Address != before[1-i] {
+            t.Fatalf("requested swapped IPv4 not persisted before restart for %s", endpoint.service)
+        }
     }
     return &dynamicEndpointReassignment{endpoints: endpoints}
 }
@@ -280,17 +307,5 @@ func TestDynamicNetworkProfile(t *testing.T) {
     }
     if dynamicNetworkProfile("deployments/docker-compose-ha.yml") {
         t.Fatal("pinned profile must not force endpoint churn")
-    }
-}
-
-func TestDockerNetworkHasContainer(t *testing.T) {
-    raw := "{\"container-a\":{\"Name\":\"broker2\"}}"
-    attached, err := dockerNetworkHasContainer(raw, "container-a")
-    if err != nil || !attached {
-        t.Fatalf("expected container attached, got attached=%v err=%v", attached, err)
-    }
-    attached, err = dockerNetworkHasContainer(raw, "container-b")
-    if err != nil || attached {
-        t.Fatalf("expected container detached, got attached=%v err=%v", attached, err)
     }
 }
