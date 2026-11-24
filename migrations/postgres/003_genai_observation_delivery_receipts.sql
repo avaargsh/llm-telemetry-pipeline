@@ -11,7 +11,12 @@ CREATE TABLE IF NOT EXISTS genai_observation_delivery_receipts (
     accepted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + interval '30 days',
     PRIMARY KEY (tenant_id, idempotency_key),
-    CHECK (idempotency_key ~ '^[A-Za-z0-9._:/@-]{1,256}$'),
+    CHECK (length(idempotency_key) BETWEEN 1 AND 256 AND idempotency_key ~ '^[A-Za-z0-9._:/@-]+
+    CHECK (expires_at > accepted_at)
+);
+CREATE INDEX IF NOT EXISTS idx_genai_observation_delivery_receipts_expiry
+    ON genai_observation_delivery_receipts (expires_at);
+),
     CHECK (expires_at > accepted_at)
 );
 CREATE INDEX IF NOT EXISTS idx_genai_observation_delivery_receipts_expiry
