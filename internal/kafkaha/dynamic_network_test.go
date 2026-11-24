@@ -9,7 +9,6 @@ import (
     "path/filepath"
     "strings"
     "testing"
-    "time"
 )
 
 type dynamicBrokerEndpoint struct {
@@ -150,47 +149,32 @@ func haCaptureDynamicBrokerEndpoints(t *testing.T, ctx context.Context, services
 }
 
 type dynamicEndpointReassignment struct {
-    endpoints        []dynamicBrokerEndpoint
-    reservationNames []string
+    endpoints []dynamicBrokerEndpoint
 }
 
-func (r *dynamicEndpointReassignment) cleanupReservations() {
-    if r == nil || len(r.reservationNames) == 0 {
-        return
+func validateVoterIPSwap(before, after [2]string) error {
+    for _, raw := range before {
+        address, err := netip.ParseAddr(raw)
+        if err != nil || !address.Is4() { return fmt.Errorf("invalid original voter IPv4: %q", raw) }
     }
-    cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-    defer cancel()
-    for _, name := range r.reservationNames {
-        _, _ = haDockerCommand(cleanupCtx, "rm", "-f", name)
+    if before[0] == before[1] || after[0] != before[1] || after[1] != before[0] {
+        return fmt.Errorf("expected cross-owner IPv4 swap: before=%v after=%v", before, after)
     }
-    r.reservationNames = nil
+    return nil
 }
 
 func haReassignDynamicBrokerEndpoints(t *testing.T, ctx context.Context, endpoints []dynamicBrokerEndpoint) *dynamicEndpointReassignment {
     t.Helper()
-    if len(endpoints) == 0 {
-        return nil
-    }
-    if len(endpoints) != 2 {
-        t.Fatalf("expected two dynamic voter endpoints, got %d", len(endpoints))
-    }
+    if len(endpoints) == 0 { return nil }
+    if len(endpoints) != 2 { t.Fatalf("expected two dynamic voter endpoints, got %d", len(endpoints)) }
     network := endpoints[0].network
-    oldIPs := make(map[string]struct{}, len(endpoints))
+    before := [2]string{endpoints[0].ipv4, endpoints[1].ipv4}
+    if err := validateVoterIPSwap(before, [2]string{before[1], before[0]}); err != nil { t.Fatal(err) }
     for _, endpoint := range endpoints {
-        if endpoint.network != network || endpoint.containerID == "" || endpoint.ipv4 == "" {
+        if endpoint.network != network || endpoint.containerID == "" {
             t.Fatalf("inconsistent captured Docker endpoint for %s", endpoint.service)
         }
-        if _, duplicate := oldIPs[endpoint.ipv4]; duplicate {
-            t.Fatalf("duplicate captured IPv4 %s", endpoint.ipv4)
-        }
-        oldIPs[endpoint.ipv4] = struct{}{}
     }
-
-    reassignment := &dynamicEndpointReassignment{endpoints: endpoints}
-    // Register cleanup before any Docker mutation. If a later operation fails,
-    // no temporary address holder is allowed to outlive this test.
-    t.Cleanup(reassignment.cleanupReservations)
-
     // A stopped Docker container may already have been detached by the
     // engine. Disconnect it if the endpoint still exists.
     for _, endpoint := range endpoints {
@@ -207,87 +191,56 @@ func haReassignDynamicBrokerEndpoints(t *testing.T, ctx context.Context, endpoin
         }
     }
 
-    // Occupy the released addresses with disposable non-Kafka containers so
-    // Docker must allocate different IPv4 endpoints to the original brokers.
-    for i, endpoint := range endpoints {
-        name := fmt.Sprintf("m3b-ip-hold-%s-%d", endpoint.service, time.Now().UnixNano()+int64(i))
-        reassignment.reservationNames = append(reassignment.reservationNames, name)
-        runArgs := []string{"run", "-d", "--rm", "--name", name,
-            "--network", network, "--ip", endpoint.ipv4,
-            "busybox:1.36", "sleep", "600"}
-        if _, reserveErr := haDockerCommand(ctx, runArgs...); reserveErr != nil {
-            // Some Docker engines retain a stopped container's endpoint until
-            // an explicit disconnect. Retry only after forcing that endpoint
-            // away; if another container owns the IP, the second reservation
-            // still fails and the experiment remains red.
-            _, disconnectErr := haDockerCommand(ctx, "network", "disconnect", "-f", network, endpoint.containerID)
-            if _, retryErr := haDockerCommand(ctx, runArgs...); retryErr != nil {
-                t.Fatalf("reserve old IPv4 %s for %s: initial=%v disconnect=%v retry=%v",
-                    endpoint.ipv4, endpoint.service, reserveErr, disconnectErr, retryErr)
-            }
-        }
-    }
 
-    // Reattach the same stopped broker containers, preserving service DNS
-    // aliases and named Kafka volumes. Docker may not publish the assigned
-    // IPv4 until the stopped container is started; verify it immediately after
-    // the single Compose start request, while old addresses remain reserved.
-    for _, endpoint := range endpoints {
-        args := []string{"network", "connect"}
-        for _, alias := range endpoint.aliases {
-            args = append(args, "--alias", alias)
-        }
+    // Use the other stopped voter's address, not a fresh address. The
+    // explicitly configured bridge subnet permits Docker --ip assignments.
+    for i, endpoint := range endpoints {
+        args := []string{"network", "connect", "--ip", before[1-i]}
+        for _, alias := range endpoint.aliases { args = append(args, "--alias", alias) }
         args = append(args, network, endpoint.containerID)
         haDocker(t, ctx, args...)
     }
-    return reassignment
+    return &dynamicEndpointReassignment{endpoints: endpoints}
 }
 
 func (r *dynamicEndpointReassignment) verifyAndRelease(t *testing.T, ctx context.Context) map[string]map[string]string {
     t.Helper()
-    if r == nil {
-        return nil
-    }
-    oldIPs := make(map[string]struct{}, len(r.endpoints))
-    for _, endpoint := range r.endpoints {
-        oldIPs[endpoint.ipv4] = struct{}{}
-    }
-    changes := make(map[string]map[string]string, len(r.endpoints))
-    newIPs := make(map[string]struct{}, len(r.endpoints))
-    for _, endpoint := range r.endpoints {
+    if r == nil { return nil }
+    before := [2]string{r.endpoints[0].ipv4, r.endpoints[1].ipv4}
+    var after [2]string
+    changes := make(map[string]map[string]string, 2)
+    for i, endpoint := range r.endpoints {
         raw := haDocker(t, ctx, "inspect", "--format", "{{json .NetworkSettings.Networks}}", endpoint.containerID)
         networkName, newIP, aliases, err := parseDockerNetworkEndpoint(raw)
-        if err != nil {
-            t.Fatalf("inspect reassigned %s endpoint after start: %v", endpoint.service, err)
-        }
-        if networkName != endpoint.network || newIP == endpoint.ipv4 {
-            t.Fatalf("Docker did not reassign %s: network=%s old=%s new=%s", endpoint.service, networkName, endpoint.ipv4, newIP)
-        }
-        if _, reused := oldIPs[newIP]; reused {
-            t.Fatalf("Docker reused a reserved pre-fault IPv4 %s", newIP)
-        }
-        if _, duplicate := newIPs[newIP]; duplicate {
-            t.Fatalf("Docker assigned duplicate post-fault IPv4 %s", newIP)
-        }
-        newIPs[newIP] = struct{}{}
-        serviceAliasFound := false
-        for _, alias := range aliases {
-            if alias == endpoint.service {
-                serviceAliasFound = true
-                break
-            }
-        }
-        if !serviceAliasFound {
-            t.Fatalf("Docker service alias %s was not restored after reconnect", endpoint.service)
-        }
+        if err != nil { t.Fatalf("inspect swapped %s endpoint after start: %v", endpoint.service, err) }
+        if networkName != endpoint.network { t.Fatalf("unexpected Docker network for %s", endpoint.service) }
+        found := false
+        for _, alias := range aliases { if alias == endpoint.service { found = true; break } }
+        if !found { t.Fatalf("Docker service alias %s was not restored", endpoint.service) }
+        after[i] = newIP
         changes[endpoint.service] = map[string]string{"before_ipv4": endpoint.ipv4, "after_ipv4": newIP}
-        t.Logf("forced Docker endpoint reassignment %s: %s -> %s", endpoint.service, endpoint.ipv4, newIP)
     }
-    for _, name := range r.reservationNames {
-        haDocker(t, ctx, "rm", "-f", name)
-    }
-    r.reservationNames = nil
+    if err := validateVoterIPSwap(before, after); err != nil { t.Fatal(err) }
+    t.Logf("verified cross-owner voter IPv4 swap: %v -> %v", before, after)
     return changes
+}
+
+func TestValidateVoterIPSwap(t *testing.T) {
+    before := [2]string{"172.29.242.2", "172.29.242.3"}
+    for _, tc := range []struct {name string; after [2]string; valid bool}{
+        {"cross-owner swap", [2]string{"172.29.242.3", "172.29.242.2"}, true},
+        {"fresh addresses", [2]string{"172.29.242.5", "172.29.242.6"}, false},
+        {"unchanged", before, false},
+        {"partial", [2]string{"172.29.242.3", "172.29.242.6"}, false},
+        {"duplicate", [2]string{"172.29.242.3", "172.29.242.3"}, false},
+    } {
+        t.Run(tc.name, func(t *testing.T) {
+            if got := validateVoterIPSwap(before, tc.after) == nil; got != tc.valid { t.Fatalf("valid=%v want %v", got, tc.valid) }
+        })
+    }
+    for _, invalid := range [][2]string{{"invalid", "172.29.242.3"}, {"172.29.242.2", "172.29.242.2"}} {
+        if validateVoterIPSwap(invalid, [2]string{invalid[1], invalid[0]}) == nil { t.Fatalf("accepted invalid original addresses: %v", invalid) }
+    }
 }
 
 func TestParseDockerNetworkEndpoint(t *testing.T) {

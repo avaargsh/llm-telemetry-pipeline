@@ -66,8 +66,8 @@ func TestThreeBrokerParallelVoterRestart(t *testing.T) {
  }
  report["stopped_voter_ids"]=stoppedIDs
  // Capture the original dynamic endpoints before stopping the two voters.
- // The dynamic fault harness later reserves these addresses so Docker must
- // assign new ones to the same broker containers without replacing volumes.
+ // The fault harness swaps these addresses between the same containers
+ // without replacing volumes.
  dynamicEndpoints:=haCaptureDynamicBrokerEndpoints(t,ctx,stopped)
  // Stop both voters, preserving every Kafka Docker named volume.
  haCompose(t,ctx,append([]string{"stop"},stopped...)...)
@@ -88,9 +88,8 @@ func TestThreeBrokerParallelVoterRestart(t *testing.T) {
  report["quorum_loss_probe_outcome"]="UNKNOWN_NO_ACK"
  t.Logf("during loss of quorum no ACK (outcome UNKNOWN): %T",writeErr)
 
- // For dynamic profiles, reserve the old voter IPv4s and reconnect the
- // same stopped broker containers with their service aliases. This forces
- // real endpoint churn while preserving container IDs and Kafka volumes.
+ // For both dynamic profiles, swap the original voter IPv4s on the
+ // same stopped containers, preserving service aliases and Kafka volumes.
  var dynamicReassignment *dynamicEndpointReassignment
  if len(dynamicEndpoints)>0 {
     dynamicReassignment=haReassignDynamicBrokerEndpoints(t,ctx,dynamicEndpoints)
@@ -110,7 +109,14 @@ func TestThreeBrokerParallelVoterRestart(t *testing.T) {
  report["quorum_high_watermark"]=q.HighWatermark
  quorumMS:=time.Since(restartStart).Milliseconds()
  t.Logf("quorum status observed after requested restart at %d ms",quorumMS)
- recovered:=haWaitPartition(t,ctx,3,-1)
+ recovered:=haWaitPartitionWithTimeoutObservation(t,ctx,3,-1,func(last kafka.Partition){
+    rf,isr:=len(last.Replicas),len(last.Isr)
+    if rf==3 && (isr==1 || isr==2) {
+       report["failure_reason"]="ISR3_RECOVERY_TIMEOUT"
+       report["last_observed_replication_factor"]=rf
+       report["last_observed_isr"]=isr
+    }
+ })
  if err:=RequireReplicaAndISR(recovered,3,3);err!=nil{t.Fatal(err)}
  isr3MS:=time.Since(restartStart).Milliseconds()
  report["recovered_replication_factor"]=len(recovered.Replicas)

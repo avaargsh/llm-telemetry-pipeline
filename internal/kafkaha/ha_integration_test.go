@@ -71,10 +71,21 @@ func haMetadata(ctx context.Context)(kafka.Partition,error){
 }
 func haWaitPartition(t *testing.T,ctx context.Context,expectedISR int,oldLeader int)(kafka.Partition){
  t.Helper()
+ return haWaitPartitionWithTimeoutObservation(t,ctx,expectedISR,oldLeader,nil)
+}
+
+// The optional callback records actual last-observed metadata only on a deadline.
+// A generic setup, quorum, readback, or metadata-only failure is not an ISR proof.
+func haWaitPartitionWithTimeoutObservation(t *testing.T,ctx context.Context,expectedISR int,oldLeader int,onTimeout func(kafka.Partition))(kafka.Partition){
+ t.Helper()
  var last string
+ var lastObserved kafka.Partition
+ var observed bool
  for {
     p,err:=haMetadata(ctx)
     if err==nil{
+      lastObserved=p
+      observed=true
       last=fmt.Sprintf("leader=%d ISR=%d RF=%d",p.Leader.ID,len(p.Isr),len(p.Replicas))
       if len(p.Isr)==expectedISR && len(p.Replicas)==3 &&
         (oldLeader<0||p.Leader.ID!=oldLeader) {
@@ -83,7 +94,11 @@ func haWaitPartition(t *testing.T,ctx context.Context,expectedISR int,oldLeader 
       }
     }else{last=err.Error()}
     select{
-    case <-ctx.Done():t.Fatalf("waiting RF3/ISR%d and leader !=%d: %v (last %s)",expectedISR,oldLeader,ctx.Err(),last)
+    case <-ctx.Done():
+      if onTimeout!=nil && observed && ctx.Err()==context.DeadlineExceeded {
+        onTimeout(lastObserved)
+      }
+      t.Fatalf("waiting RF3/ISR%d and leader !=%d: %v (last %s)",expectedISR,oldLeader,ctx.Err(),last)
     case <-time.After(time.Second):
     }
  }

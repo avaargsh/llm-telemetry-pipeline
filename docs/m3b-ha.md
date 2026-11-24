@@ -50,11 +50,18 @@ All **nine** required GitHub Actions workflows passed on PR head `b6ed95d`, incl
 
 ## Expected untreated dynamic-IP failure classification
 
-The dynamic profile may complete the evidence-collection job only when the
-known failure signature is fully reproduced: two-voter address reassignment,
-cross-target VOTE mismatch, no unsafe ACK, unchanged persisted identities,
-and complete socket evidence. The receipt remains
-`FAILED_ISR3_NOT_RESTORED`; this is not a Kafka recovery pass or root-cause proof.
+The dynamic profile intentionally preserves the historical failure when an
+actual two-voter address reassignment is followed by cross-target KRaft VOTE
+requests and ISR3 does not recover. The CI wrapper may classify only that
+fully evidenced signature as `EXPECTED_UNTREATED_FAILURE_REPRODUCED` so the
+evidence-collection workflow itself can complete. Classification requires an actual
+post-quorum ISR3 wait deadline with last observed RF3/ISR1 or RF3/ISR2, and
+rejects receipts that show recovery or successful readback. An incomplete
+receipt alone cannot authorize expected-failure classification. The receipt remains
+`FAILED_ISR3_NOT_RESTORED`; this is **not** a Kafka recovery pass, mitigation,
+or root-cause proof. Any failure without the exact address-reassignment,
+cross-target VOTE, no-unsafe-ACK, and complete identity/socket evidence remains
+a failed CI job.
 
 ## DNS TTL treatment evidence threshold
 
@@ -457,8 +464,8 @@ The network A/B workflow runs three independent jobs per profile (six total), wi
 
 The stacked experimental profile `deployments/docker-compose-ha-dns-ttl-zero.yml` changes only positive Java DNS caching policy relative to the dynamic-address control, besides the isolated Compose project and mounted policy file. Before the fault and after verified recovery, each broker must have the startup option and its mounted policy present; a separate JVM in the same container must report `networkaddress.cache.ttl=0` through `-XshowSettings:security:properties`. This checks policy loading in the image and startup configuration, **not** the internal cache state of the live broker JVM.
 
-Both the untreated `dynamic` control and `dynamic-ttl-zero` treatment now share a deterministic Docker endpoint-churn harness. After the two non-leader brokers stop and the no-ACK probe is recorded, the harness disconnects the same stopped broker containers, reserves each original IPv4 with a disposable BusyBox holder, and reconnects those broker containers to the same network with their service aliases. It keeps the holders alive through the single Compose start command for both voters, then verifies both new unique IPv4s and restored service aliases before removing the holders and proceeding to quorum checks. Docker may not publish a stopped container's assigned IPv4 until it starts. The harness does not recreate broker containers or named Kafka volumes. The pinned control is not modified.
+Both the untreated `dynamic` control and `dynamic-ttl-zero` treatment share a deterministic cross-owner IPv4 swap harness. After both non-leader brokers stop and the no-ACK probe is recorded, the same stopped containers are detached and connected to the same isolated bridge with each other's original IPv4 and their own service aliases. Both are started by one Compose command; the actual swapped addresses and aliases must be verified before quorum checks. A user-configured subnet permits explicit IP allocation; no broker has a fixed initial IP. Containers and named volumes are not recreated. The pinned control is unchanged.
 
-An inability to release, reserve, or reassign both endpoints is a failed experiment, not an unexposed success. The before/after diagnostics independently confirm the actual address changes. This forces endpoint exposure but does not inspect the live Kafka JVM's internal DNS cache or prove root cause.
+An inability to detach, swap, or verify both endpoints fails the experiment. Fresh addresses, unchanged addresses, and partial swaps are not qualifying exposure. Before/after diagnostics independently confirm cross-owner reassignment. This does not inspect the live JVM DNS cache or prove root cause.
 
 The TTL verdict requires a comparison receipt explicitly labeled `dynamic-ttl-zero`, not an untreated `dynamic` control from the same commit. The smoke script pairs the treatment label exclusively with the TTL-zero Compose file and verifies policy before fault and after recovery before issuing a successful comparison. This label is not a cryptographic attestation or proof of live JVM cache state. The TTL verdict requires the normal recovery receipt, 35 ACKed identities, zero observed wrong-target votes, and a structurally consistent IPv4 reassignment record. Unexposed recovery is inconclusive. This does not prove root cause, production recovery, or a permanent mitigation. Preserve the original untreated RED trials; never suppress their failure. All new experiments require hosted exact-head verification.
