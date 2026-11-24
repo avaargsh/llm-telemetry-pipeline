@@ -1,6 +1,7 @@
 """Require actual endpoint reallocation, not merely a successful restart."""
 import argparse
 import json
+import ipaddress
 from pathlib import Path
 
 def verify(head, report):
@@ -17,10 +18,31 @@ def verify(head, report):
         raise ValueError("cross-target vote observed or unknown")
     exposure=report.get("endpoint_exposure")
     reassigned=report.get("reassigned_addresses")
-    if exposure in {"NO_ADDRESS_CHANGE_OBSERVED","ADDRESS_CHANGE_WITHOUT_REASSIGNMENT"} and reassigned==[]:
+    nodes={"broker1","broker2","broker3"}
+    changed=report.get("ip_changed_nodes")
+    if not isinstance(changed,list) or any(not isinstance(n,str) or n not in nodes for n in changed) or len(set(changed))!=len(changed):
+        raise ValueError("invalid changed node list")
+    if exposure=="NO_ADDRESS_CHANGE_OBSERVED" and reassigned==[] and not changed:
+        return "UNEXPOSED_INCONCLUSIVE"
+    if exposure=="ADDRESS_CHANGE_WITHOUT_REASSIGNMENT" and reassigned==[] and changed:
         return "UNEXPOSED_INCONCLUSIVE"
     if exposure!="ADDRESS_REASSIGNMENT_OBSERVED" or not isinstance(reassigned,list) or not reassigned:
         raise ValueError("missing reassignment evidence")
+    addresses, prior, current=set(),set(),set()
+    for row in reassigned:
+        if not isinstance(row,dict):
+            raise ValueError("invalid reassignment row")
+        ip,before,after=row.get("ipv4"),row.get("before_owner"),row.get("after_owner")
+        if not isinstance(ip,str) or not isinstance(before,str) or not isinstance(after,str):
+            raise ValueError("invalid reassignment fields")
+        addr=ipaddress.IPv4Address(ip)
+        if before==after or before not in changed or after not in changed:
+            raise ValueError("reassignment owners inconsistent with changed nodes")
+        if addr in addresses or before in prior or after in current:
+            raise ValueError("duplicate reassignment address or owner")
+        addresses.add(addr)
+        prior.add(before)
+        current.add(after)
     return "EXPOSED_RECOVERY_VERIFIED"
 
 if __name__=="__main__":
