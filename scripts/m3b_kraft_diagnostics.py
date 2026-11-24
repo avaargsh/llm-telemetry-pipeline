@@ -122,7 +122,7 @@ def assess(nodes):
         if not expected_ips[name]:
             findings.append(f"{name}: no Docker container IPv4")
         if n.get("image_ref") != expected_ref:
-            findings.append(f"{name}: Kafka image reference differs from configured pinned digest")
+            findings.append(f"{name}: Kafka image reference differs from pinned digest")
         repo_digest = n.get("repo_digest", "")
         if repo_digest != expected_repo_digest:
             findings.append(f"{name}: actual repo digest differs from requested image digest")
