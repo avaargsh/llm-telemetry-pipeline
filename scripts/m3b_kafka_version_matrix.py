@@ -210,7 +210,7 @@ def write_atomic(path, data):
             candidate = stream.name
             os.chmod(candidate, 0o600)
             json.dump(data, stream, indent=2, sort_keys=True)
-            stream.write("\\n")
+            stream.write("\n")
         os.replace(candidate, output)
     finally:
         if candidate and os.path.exists(candidate):
@@ -230,7 +230,7 @@ def main():
         result = verify(args.head, rows, args.expected_trials, args.minimum_exposed)
         write_atomic(args.out, result)
     except (OSError, UnicodeError, ValueError, TypeError, AttributeError, KeyError) as exc:
-        parser.exit(2, f"Kafka version comparison failed closed: {type(exc).__name__}\\n")
+        parser.exit(2, f"Kafka version comparison failed closed: {type(exc).__name__}\n")
     print(json.dumps(result, sort_keys=True))
 
 
