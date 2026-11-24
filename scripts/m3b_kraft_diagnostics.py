@@ -17,6 +17,7 @@ import tempfile
 
 NODES = ("broker1", "broker2", "broker3")
 KAFKA_IMAGE_REF = "apache/kafka:4.1.0@sha256:bff074a5d0051dbc0bbbcd25b045bb1fe84833ec0d3c7c965d1797dd289ec88f"
+KAFKA_IMAGE_REF_PATTERN = re.compile(r"apache/kafka:[0-9]+\\.[0-9]+\\.[0-9]+@sha256:[0-9a-f]{64}\\Z")
 META_KEYS = frozenset(("node.id", "cluster.id", "directory.id"))
 JAVA_RUNTIME_KEYS = frozenset((
     "java.vendor", "java.version", "java.runtime.version",
@@ -26,6 +27,12 @@ QUORUM_KEYS = frozenset(("ClusterId", "LeaderId", "LeaderEpoch",
                          "HighWatermark", "CurrentVoters", "CurrentObservers",
                          "MaxFollowerLag", "MaxFollowerLagTimeMs"))
 COMPOSE = ("docker", "compose", "-f", os.getenv("M3B_HA_COMPOSE_FILE", "deployments/docker-compose-ha.yml"))
+
+
+def expected_kafka_image_ref():
+    """Return the selected immutable Kafka image reference, or empty if invalid."""
+    image_ref = os.getenv("M3B_EXPECTED_KAFKA_IMAGE_REF", KAFKA_IMAGE_REF)
+    return image_ref if KAFKA_IMAGE_REF_PATTERN.fullmatch(image_ref) else ""
 
 
 def parse_properties(raw):
@@ -67,6 +74,9 @@ def assess(nodes):
     directory_seen = set()
     image_ids = set()
     java_runtime_ids = set()
+    expected_image_ref = expected_kafka_image_ref()
+    if not expected_image_ref:
+        findings.append("missing or invalid expected Kafka image reference")
     for name in NODES:
         n = nodes.get(name, {})
         expected = int(name[-1])
@@ -86,8 +96,8 @@ def assess(nodes):
             directory_seen.add(directory_id)
         if not expected_ips[name]:
             findings.append(f"{name}: no Docker container IPv4")
-        if n.get("image_ref") != KAFKA_IMAGE_REF:
-            findings.append(f"{name}: Kafka image reference differs from pinned digest")
+        if expected_image_ref and n.get("image_ref") != expected_image_ref:
+            findings.append(f"{name}: Kafka image reference differs from expected digest-qualified image")
         image_id = n.get("image_id", "")
         if not re.fullmatch(r"sha256:[0-9a-f]{64}", image_id):
             findings.append(f"{name}: missing Docker image ID")
