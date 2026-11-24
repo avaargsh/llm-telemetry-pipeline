@@ -12,6 +12,9 @@ on:
       - "scripts/m3b_kraft_audit.py"
       - "scripts/m3b_controller_sockets.py"
   workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   network-ab:
     name: KRaft-parallel-fault-${{ matrix.profile }}-network
