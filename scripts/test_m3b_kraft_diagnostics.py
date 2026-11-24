@@ -12,12 +12,25 @@ diagnostics = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(diagnostics)
 
 
+def java_runtime():
+    return {
+        "java.vendor": "Eclipse Adoptium",
+        "java.version": "17.0.16",
+        "java.runtime.version": "17.0.16+8",
+        "java.vm.name": "OpenJDK 64-Bit Server VM",
+        "java.vm.vendor": "Eclipse Adoptium",
+        "java.vm.version": "17.0.16+8",
+        "os.arch": "amd64",
+    }
+
+
 def node(num, ip):
     return {
         "expected_id": num,
         "container_ipv4": ip,
         "image_ref": diagnostics.KAFKA_IMAGE_REF,
         "image_id": "sha256:" + "a" * 64,
+        "java_runtime": java_runtime(),
         "meta": {
             "node.id": str(num),
             "cluster.id": "test-only-cluster",
@@ -99,6 +112,32 @@ other-secret=never-print
         findings = diagnostics.assess(nodes)
         self.assertIn("broker2: missing Kafka node identity", findings)
         self.assertIn("broker3: cluster.id differs across nodes", findings)
+
+    def test_java_properties_keep_only_allowlisted_runtime_identity(self):
+        raw = """Property settings:
+    java.vendor = Eclipse Adoptium
+    java.version = 17.0.16
+    java.runtime.version = 17.0.16+8
+    java.vm.name = OpenJDK 64-Bit Server VM
+    java.vm.vendor = Eclipse Adoptium
+    java.vm.version = 17.0.16+8
+    os.arch = amd64
+    user.name = never-print
+openjdk version "17.0.16" 2026-07-15
+"""
+        self.assertEqual(diagnostics.parse_java_properties(raw), java_runtime())
+
+    def test_missing_java_runtime_identity_fails_closed(self):
+        nodes = {f"broker{i}": node(i, f"172.22.0.{i+10}") for i in (1, 2, 3)}
+        nodes["broker2"]["java_runtime"] = {}
+        findings = diagnostics.assess(nodes)
+        self.assertIn("broker2: missing or incomplete Java runtime identity", findings)
+
+    def test_java_runtime_identity_must_match_across_brokers(self):
+        nodes = {f"broker{i}": node(i, f"172.22.0.{i+10}") for i in (1, 2, 3)}
+        nodes["broker3"]["java_runtime"]["java.runtime.version"] = "21.0.1+12"
+        findings = diagnostics.assess(nodes)
+        self.assertIn("Java runtime identities differ across brokers", findings)
 
     def test_parse_quorum_keeps_only_safe_status_fields(self):
         raw = """ClusterId: good
