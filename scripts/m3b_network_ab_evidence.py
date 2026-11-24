@@ -34,7 +34,7 @@ def _runtime_identity(snapshot):
         ensure(isinstance(row, dict), "invalid runtime identity node")
         image_ref = row.get("image_ref", "")
         match = re.fullmatch(
-            r"apache/kafka:(\\d+\\.\\d+\\.\\d+)@sha256:([0-9a-f]{64})",
+            r"apache/kafka:(\d+\.\d+\.\d+)@sha256:([0-9a-f]{64})",
             image_ref if isinstance(image_ref, str) else "")
         ensure(match is not None, "Kafka image reference is not version-and-digest pinned")
         kafka_version, digest = match.groups()
