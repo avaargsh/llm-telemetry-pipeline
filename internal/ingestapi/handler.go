@@ -3,6 +3,7 @@
 package ingestapi
 
 import (
+    "bytes"
     "context"
     "crypto/sha256"
     "crypto/subtle"
@@ -123,7 +124,12 @@ func (h *handler) ingest(w http.ResponseWriter, r *http.Request) {
         writeError(w, http.StatusUnsupportedMediaType, "unsupported_media_type")
         return
     }
-    decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, MaxBodyBytes))
+    raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, MaxBodyBytes))
+    if err != nil {
+        writeDecodeError(w, err)
+        return
+    }
+    decoder := json.NewDecoder(bytes.NewReader(raw))
     decoder.DisallowUnknownFields()
     var usage event.UsageEvent
     if err := decoder.Decode(&usage); err != nil {
@@ -137,6 +143,10 @@ func (h *handler) ingest(w http.ResponseWriter, r *http.Request) {
         } else {
             writeDecodeError(w, err)
         }
+        return
+    }
+    if err := rejectAmbiguousMembers(raw); err != nil {
+        writeDecodeError(w, err)
         return
     }
     if usage.TenantID != principal.tenantID || usage.ProjectID != principal.projectID {
@@ -168,6 +178,44 @@ func (h *handler) ingest(w http.ResponseWriter, r *http.Request) {
         w.Header().Set("Retry-After", "1")
         writeError(w, http.StatusServiceUnavailable, "ledger_outcome_unknown")
     }
+}
+
+
+// rejectAmbiguousMembers checks the original object, before ledger writes.
+// encoding/json otherwise accepts duplicate members and case-folded aliases.
+// Values are already type-checked by the strict UsageEvent decoder above.
+func rejectAmbiguousMembers(raw []byte) error {
+   d := json.NewDecoder(bytes.NewReader(raw))
+   start, err := d.Token()
+   if err != nil || start != json.Delim('{') {
+       return errors.New("usage event must be a JSON object")
+   }
+   seen := make([]string, 0, 16)
+   for d.More() {
+       token, err := d.Token()
+       if err != nil {
+           return err
+       }
+       key, ok := token.(string)
+       if !ok {
+           return errors.New("invalid JSON object member")
+       }
+       for _, prior := range seen {
+           if strings.EqualFold(prior, key) {
+               return errors.New("ambiguous JSON object member")
+           }
+       }
+       seen = append(seen, key)
+       var value json.RawMessage
+       if err := d.Decode(&value); err != nil {
+           return err
+       }
+   }
+   end, err := d.Token()
+   if err != nil || end != json.Delim('}') {
+       return errors.New("incomplete JSON object")
+   }
+   return nil
 }
 
 func writeDecodeError(w http.ResponseWriter, err error) {
