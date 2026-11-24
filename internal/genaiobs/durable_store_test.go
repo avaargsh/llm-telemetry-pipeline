@@ -284,3 +284,43 @@ func TestDurableStoreCapacityConfigurationMustMatchAcrossWriters(t *testing.T) {
 		t.Fatalf("mismatched replica capacity was accepted: %v",err)
 	}
 }
+
+type scriptedDurableExporter struct {
+	results []error
+	seen []Delivery
+}
+func (e *scriptedDurableExporter) Export(_ context.Context,d Delivery)error {
+	e.seen=append(e.seen,d)
+	if len(e.results)==0 { return nil }
+	err:=e.results[0]
+	e.results=e.results[1:]
+	return err
+}
+
+func TestDurableWorkerRetrySurvivesWorkerReplacement(t *testing.T) {
+	store,db:=openDurableTestStore(t,8)
+	ctx:=context.Background()
+	tenant:=fmt.Sprintf("durable-test-%d",time.Now().UnixNano())
+	o:=durableTestObservation(tenant,"d123456789abcdef0123456789abcdef",91)
+	if err:=store.Enqueue(ctx,o);err!=nil { t.Fatal(err) }
+	exporter:=&scriptedDurableExporter{results:[]error{errors.New("temporary"),nil}}
+	policy:=RetryPolicy{MaxAttempts:3,InitialBackoff:time.Minute,MaxBackoff:2*time.Minute,Jitter:0}
+	first,err:=NewDurableWorker(store,exporter,"worker-before-restart",time.Minute,policy)
+	if err!=nil { t.Fatal(err) }
+	if delivered,err:=first.RunOnce(ctx);delivered||!errors.Is(err,ErrRetryScheduled) {
+		t.Fatalf("first attempt delivered=%v err=%v",delivered,err)
+	}
+	var id int64
+	if err:=db.QueryRowContext(ctx,"SELECT observation_id FROM genai_observations WHERE tenant_id=$1",tenant).Scan(&id);err!=nil { t.Fatal(err) }
+	if _,err:=db.ExecContext(ctx,"UPDATE genai_observations SET available_at=now()-interval '1 second' WHERE observation_id=$1",id);err!=nil { t.Fatal(err) }
+	// A newly constructed worker has no process-local attempt state to inherit.
+	restartedStore,err:=NewDurableStore(db,8);if err!=nil { t.Fatal(err) }
+	restarted,err:=NewDurableWorker(restartedStore,exporter,"worker-after-restart",time.Minute,policy)
+	if err!=nil { t.Fatal(err) }
+	if delivered,err:=restarted.RunOnce(ctx);!delivered||err!=nil { t.Fatalf("replacement delivery=%v err=%v",delivered,err) }
+	if len(exporter.seen)!=2 || exporter.seen[0].Attempts!=1 || exporter.seen[1].Attempts!=2 ||
+		exporter.seen[0].IdempotencyKey()!=exporter.seen[1].IdempotencyKey() {
+		t.Fatalf("retry identity/attempts were not durable: %+v",exporter.seen)
+	}
+	if n,err:=restartedStore.Len(ctx);err!=nil||n!=0 { t.Fatalf("replacement ACK left %d rows: %v",n,err) }
+}
