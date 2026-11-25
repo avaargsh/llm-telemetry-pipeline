@@ -78,8 +78,17 @@ func TestPriceVersionRegistryConstraintsAndScope(t *testing.T) {
 	if err!=nil||version!="v1"||digest!=fp{t.Fatalf("binding=%q %q err=%v",version,digest,err)}
 	expect("42501","SELECT * FROM public.price_version_registry")
 	expect("42501",insert,tenant,project,"v2",fp)
-	expect("42501","UPDATE public.usage_query_price_versions SET price_fingerprint=$1",other)
-	expect("42501","DELETE FROM public.usage_query_price_versions")
+	// PostgreSQL rejects DML on a non-updatable join view before checking
+	// write privileges (SQLSTATE 55000). Assert the absence of privileges
+	// separately so structural rejection cannot mask an accidental grant.
+	for _, privilege := range []string{"INSERT","UPDATE","DELETE","TRUNCATE"} {
+		var granted bool
+		if err := tx.QueryRowContext(ctx,"SELECT has_table_privilege(current_user, 'public.usage_query_price_versions', $1)",privilege).Scan(&granted);err!=nil||granted {
+			t.Fatalf("unexpected view privilege %s: granted=%v err=%v",privilege,granted,err)
+		}
+	}
+	expect("55000","UPDATE public.usage_query_price_versions SET price_fingerprint=$1",other)
+	expect("55000","DELETE FROM public.usage_query_price_versions")
 	exec("RESET SESSION AUTHORIZATION")
 	exec("DELETE FROM public.usage_query_scope_bindings WHERE login_role=$1",role)
 	exec("SET LOCAL SESSION AUTHORIZATION "+ident)
