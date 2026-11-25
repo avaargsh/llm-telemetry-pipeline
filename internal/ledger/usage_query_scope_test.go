@@ -38,6 +38,7 @@ func TestUsageQueryDatabaseScopeMigration(t *testing.T) {
 VALUES (gen_random_uuid(),$1,$2,$3,'usage.finalized',1,'model',10,3,repeat('a',64),now())`,
 			scope.tenant,scope.project,suffix+string(rune('a'+i)))
 	}
+	if err := verifyQueryScope(ctx, tx, tenant, "p"); err == nil { t.Fatal("privileged login accepted") }
 	for _, tc := range []struct{role string; count int}{{bound,1},{unbound,0}} {
 		exec("SET LOCAL SESSION AUTHORIZATION "+tc.role)
 		var count int
@@ -56,6 +57,13 @@ VALUES (gen_random_uuid(),$1,$2,$3,'usage.finalized',1,'model',10,3,repeat('a',6
 			if err := tx.QueryRowContext(ctx,"SELECT has_table_privilege(current_user,$1,$2)",check.table,check.privilege).Scan(&allowed); err != nil || allowed {
 				t.Fatalf("unexpected privilege %s %s: %t %v",check.table,check.privilege,allowed,err)
 			}
+		}
+		if tc.role == bound {
+			if err := verifyQueryScope(ctx, tx, tenant, "p"); err != nil { t.Fatal(err) }
+			if err := verifyQueryScope(ctx, tx, tenant, "other"); err == nil { t.Fatal("mismatched project accepted") }
+			if err := verifyQueryScope(ctx, tx, tenant+"-other", "p"); err == nil { t.Fatal("mismatched tenant accepted") }
+		} else if err := verifyQueryScope(ctx, tx, tenant, "p"); err == nil {
+			t.Fatal("unbound login accepted")
 		}
 		exec("RESET SESSION AUTHORIZATION")
 	}
