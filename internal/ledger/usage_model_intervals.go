@@ -43,12 +43,6 @@ func validateModelQueryWindows(windows []ModelQueryWindow) error {
 func (s *ScopedUsageReader) UsageByModelWindows(ctx context.Context,tenant,project string,windows []ModelQueryWindow)([]ModelWindowCapture,error) {
 	if err := validateModelQueryWindows(windows);err != nil { return nil,err }
 	return scopedRead(ctx,s,tenant,project,func(tx *sql.Tx)([]ModelWindowCapture,error){
-		result := make([]ModelWindowCapture,0,len(windows))
-		for _,w := range windows {
-			models,err := queryUsageByModel(ctx,tx,scopedUsageRelation,tenant,project,w.From,w.To)
-			if err != nil { return nil,err }
-			result = append(result,ModelWindowCapture{ModelQueryWindow:ModelQueryWindow{From:w.From.UTC(),To:w.To.UTC()},Models:models})
-		}
-		return result,nil
+		return captureModelWindows(ctx, tx, tenant, project, windows)
 	})
 }
