@@ -253,7 +253,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "100 * sum by(instance) (rate(llm_telemetry_genai_receiver_admission_failed_total[5m])) / clamp_min(sum by(instance) (rate(llm_telemetry_genai_receiver_admission_requests_total[5m])),1e-9) and on(instance) (max by(instance) (up{instance=~\".*:4318\"}) == 1)",
+          "expr": "round(100 * sum by(instance) (rate(llm_telemetry_genai_receiver_admission_failed_total[5m])) / clamp_min(sum by(instance) (rate(llm_telemetry_genai_receiver_admission_requests_total[5m])),1e-9) and on(instance) (max by(instance) (up{instance=~\".*:4318\"}) == 1), 0.01)",
           "legendFormat": "{{instance}}",
           "instant": false,
           "range": true
@@ -726,7 +726,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "100 * rate(llm_telemetry_genai_worker_retryable_total[5m]) / clamp_min(rate(llm_telemetry_genai_worker_acknowledged_total[5m]) + rate(llm_telemetry_genai_worker_retryable_total[5m]) + rate(llm_telemetry_genai_worker_terminal_total[5m]),1e-9) and on(job,instance) (up{job=\"genai-observation-worker\"} == 1)",
+          "expr": "round(100 * rate(llm_telemetry_genai_worker_retryable_total[5m]) / clamp_min(rate(llm_telemetry_genai_worker_acknowledged_total[5m]) + rate(llm_telemetry_genai_worker_retryable_total[5m]) + rate(llm_telemetry_genai_worker_terminal_total[5m]),1e-9) and on(job,instance) (up{job=\"genai-observation-worker\"} == 1), 0.01)",
           "legendFormat": "{{instance}}",
           "instant": false,
           "range": true
