@@ -22,19 +22,21 @@ type ModelUsage struct {
 // UsageByModel reads finalized authoritative ledger rows, using the same
 // scope and half-open event-time semantics as UsageSummary.
 func (s *Store) UsageByModel(ctx context.Context, tenant, project string, from, to time.Time) ([]ModelUsage, error) {
+	if s == nil || s.DB == nil { return nil, errors.New("ledger database is required") }
+	return queryUsageByModel(ctx,s.DB,baseUsageRelation,tenant,project,from,to)
+}
+
+func queryUsageByModel(ctx context.Context, db usageQueryDB, relation usageRelation, tenant, project string, from, to time.Time) ([]ModelUsage, error) {
 	if strings.TrimSpace(tenant) == "" || strings.TrimSpace(project) == "" ||
 		from.IsZero() || to.IsZero() || !to.After(from) || to.Sub(from) > MaxUsageWindow {
 		return nil, errors.New("tenant, project and a positive time window of at most 31 days are required")
 	}
-	if s == nil || s.DB == nil {
-		return nil, errors.New("ledger database is required")
-	}
-	rows, err := s.DB.QueryContext(ctx, `
+	rows, err := db.QueryContext(ctx, `
 SELECT model, count(*),
        coalesce(sum(prompt_tokens), 0)::text,
        coalesce(sum(completion_tokens), 0)::text,
        (coalesce(sum(prompt_tokens), 0) + coalesce(sum(completion_tokens), 0))::text
-FROM public.usage_ledger
+FROM `+string(relation)+`
 WHERE tenant_id = $1 AND project_id = $2
   AND event_time >= $3 AND event_time < $4
 GROUP BY model
