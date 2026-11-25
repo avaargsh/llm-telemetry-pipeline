@@ -22,20 +22,22 @@ const MaxUsageWindow = 31 * 24 * time.Hour
 // UsageSummary reads a half-open event-time window from the authoritative
 // ledger only. Outbox, Kafka and ClickHouse replay cannot inflate the count.
 func (s *Store) UsageSummary(ctx context.Context, tenant, project string, from, to time.Time) (UsageSummary, error) {
+	if s == nil || s.DB == nil { return UsageSummary{}, errors.New("ledger database is required") }
+	return queryUsageSummary(ctx,s.DB,baseUsageRelation,tenant,project,from,to)
+}
+
+func queryUsageSummary(ctx context.Context, db usageQueryDB, relation usageRelation, tenant, project string, from, to time.Time) (UsageSummary, error) {
 	var result UsageSummary
 	if strings.TrimSpace(tenant) == "" || strings.TrimSpace(project) == "" ||
 		from.IsZero() || to.IsZero() || !to.After(from) || to.Sub(from) > MaxUsageWindow {
 		return result, errors.New("tenant, project and a positive time window of at most 31 days are required")
 	}
-	if s == nil || s.DB == nil {
-		return result, errors.New("ledger database is required")
-	}
-	err := s.DB.QueryRowContext(ctx, `
+	err := db.QueryRowContext(ctx, `
 SELECT count(*),
        coalesce(sum(prompt_tokens), 0)::text,
        coalesce(sum(completion_tokens), 0)::text,
        (coalesce(sum(prompt_tokens), 0) + coalesce(sum(completion_tokens), 0))::text
-FROM public.usage_ledger
+FROM `+string(relation)+`
 WHERE tenant_id = $1 AND project_id = $2
   AND event_time >= $3 AND event_time < $4
 `, tenant, project, from, to).Scan(&result.RequestCount, &result.PromptTokens, &result.CompletionTokens, &result.TotalTokens)
