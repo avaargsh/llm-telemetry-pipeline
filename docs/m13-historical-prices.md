@@ -63,3 +63,45 @@ cannot certify capture completeness, snapshot consistency or genuine
 historical rates. It does not persist schedules or enforce immutable
 versions across deployments. Do not use it as an invoice or automatic
 charge mechanism.
+
+
+## Scoped historical CLI (M13.4)
+
+Use the M12 read-only project login and its existing environment configuration:
+`USAGE_QUERY_DATABASE_URL`, `USAGE_QUERY_TENANT_ID` and
+`USAGE_QUERY_PROJECT_ID`. Obtain the scoped database credentials from
+your administrator; never use the writer DSN or commit credentials.
+For remote PostgreSQL use a verified TLS connection.
+
+Supply a JSON array of explicit price periods. For example, these rates
+are fictional, not a provider price feed:
+
+```json
+[
+  {"from":"2026-11-21T00:00:00Z","to":"2026-11-21T01:00:00Z","table":{"version":"v1","currency":"USD","rates":[{"model":"Qwen3-32B","input_per_million":"1","output_per_million":"0"}]}},
+  {"from":"2026-11-21T01:00:00Z","to":"2026-11-21T02:00:00Z","table":{"version":"v2","currency":"USD","rates":[{"model":"Qwen3-32B","input_per_million":"2","output_per_million":"0"}]}}
+]
+```
+
+Save as schedule.json and run:
+
+```sh
+go run ./cmd/usage-cost-estimate --schedule schedule.json \
+  --from 2026-11-21T00:00:00Z --to 2026-11-21T02:00:00Z
+```
+
+The command validates the price schedule before opening PostgreSQL, uses
+a dedicated scoped login, captures all windows in a single read-only
+repeatable-read transaction, and emits JSON with tenant/project, UTC
+window bounds, per-version costs, and the exact total. The deadline
+for database work is 15 seconds. Errors exit nonzero without a partial
+estimate; database errors are deliberately redacted. The existing
+offline `--usage --prices` mode remains unchanged.
+
+For a disposable end-to-end example with synthetic data, run
+`make usage-query-demo`. In this example the rate changes between two
+events, so the expected historical total is USD 0.002450000000. The demo
+also checks that revoking the database scope rejects historical queries.
+The real query snapshot does not prove usage completeness, tariff
+provenance, durable version history, or invoice correctness. Retain
+the exact supplied schedule alongside the report.
