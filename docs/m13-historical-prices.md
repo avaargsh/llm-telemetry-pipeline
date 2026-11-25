@@ -105,3 +105,13 @@ also checks that revoking the database scope rejects historical queries.
 The real query snapshot does not prove usage completeness, tariff
 provenance, durable version history, or invoice correctness. Retain
 the exact supplied schedule alongside the report.
+
+### JSON input identity
+
+Usage, price and historical schedule files must be valid UTF-8. All schema
+object keys must be ASCII; case-insensitive ASCII aliases remain compatible,
+but duplicate keys (including ASCII case variants) and Unicode field-name
+aliases are rejected before typed decoding. Unicode string values remain
+supported. This prevents ambiguous rate/version overrides caused by Go JSON
+field matching; it is not a persisted price catalog or tariff authenticity
+check.
