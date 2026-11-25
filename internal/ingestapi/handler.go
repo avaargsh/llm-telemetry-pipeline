@@ -50,6 +50,13 @@ func NewHandler(recorder Recorder, credentials []Credential) (http.Handler, erro
     if recorder == nil || len(credentials) == 0 {
         return nil, errors.New("recorder and at least one credential are required")
     }
+    principals, err := newPrincipals(credentials)
+    if err != nil { return nil, err }
+    return &handler{recorder: recorder, principals: principals}, nil
+}
+
+func newPrincipals(credentials []Credential) ([]principal, error) {
+    if len(credentials) == 0 { return nil, errors.New("at least one credential is required") }
     principals := make([]principal, 0, len(credentials))
     seen := make(map[[32]byte]struct{}, len(credentials))
     for _, credential := range credentials {
@@ -66,7 +73,7 @@ func NewHandler(recorder Recorder, credentials []Credential) (http.Handler, erro
         seen[digest] = struct{}{}
         principals = append(principals, principal{tokenHash: digest, tenantID: credential.TenantID, projectID: credential.ProjectID})
     }
-    return &handler{recorder: recorder, principals: principals}, nil
+    return principals, nil
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -93,6 +100,10 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handler) authenticate(header http.Header) *principal {
+    return authenticate(h.principals, header)
+}
+
+func authenticate(principals []principal, header http.Header) *principal {
     values := header.Values("Authorization")
     if len(values) != 1 || !strings.HasPrefix(values[0], "Bearer ") {
         return nil
@@ -104,9 +115,9 @@ func (h *handler) authenticate(header http.Header) *principal {
     digest := sha256.Sum256([]byte(token))
     var matched *principal
     // Always check all configured hashes; do not short-circuit on a match.
-    for i := range h.principals {
-        if subtle.ConstantTimeCompare(digest[:], h.principals[i].tokenHash[:]) == 1 {
-            matched = &h.principals[i]
+    for i := range principals {
+        if subtle.ConstantTimeCompare(digest[:], principals[i].tokenHash[:]) == 1 {
+            matched = &principals[i]
         }
     }
     return matched
