@@ -1,0 +1,32 @@
+name: m14-kafka-dashboard-promql
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/m14-dashboard.yml"
+      - "deployments/grafana/**"
+      - "scripts/m14_dashboard_promql_fixture.py"
+      - "internal/lagmonitor/**"
+      - "internal/lagrisk/**"
+      - "deployments/prometheus/**"
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  dashboard-query-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact tested HEAD
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Execute dashboard PromQL against deterministic fixtures
+        run: |
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          python3 scripts/m14_dashboard_promql_fixture.py > "$tmp/dashboard.test.yml"
+          docker run --rm -v "$tmp:/rules:ro" --entrypoint /bin/promtool prom/prometheus:v3.5.0 test rules /rules/dashboard.test.yml
