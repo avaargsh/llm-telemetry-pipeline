@@ -156,3 +156,9 @@ grafana-down:
 # Disposable authenticated Grafana provisioning/API acceptance test.
 grafana-smoke:
 	bash scripts/m14-grafana-provisioning-smoke.sh
+
+.PHONY: grafana-live-smoke
+
+# Real disposable Kafka -> lag-exporter -> Prometheus -> Grafana dashboard acceptance.
+grafana-live-smoke:
+	bash scripts/m14-grafana-live-smoke.sh

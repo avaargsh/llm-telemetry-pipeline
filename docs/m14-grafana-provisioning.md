@@ -54,6 +54,31 @@ Changing `GRAFANA_ADMIN_PASSWORD` after first initialization does not
 automatically rotate that existing account password. Use Grafana's supported
 password-rotation flow; do not delete a volume that contains data you need.
 
+## Live dashboard acceptance
+
+With Docker Compose and Go available, run:
+
+```sh
+export GRAFANA_ADMIN_USER=telemetry-ci
+export GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 32)"
+make grafana-live-smoke
+```
+
+This starts a fresh isolated single-broker Kafka lab, creates the disposable
+`m4.alert.e2e.v1` topic with broker append timestamps, writes 20 synthetic
+messages and commits the consumer group at offset 8. The real lag exporter
+must report scrape success and offset distance 12. Prometheus must scrape
+that result, and the exact PromQL from the provisioned Kafka dashboard panel
+must return the same value through Prometheus' query API. Grafana's
+authenticated API must also return the provisioned dashboard. The test tears
+down only its own Compose project and volumes.
+
+This proves one real developer-stack path from Kafka offsets to a provisioned
+Grafana dashboard. It is synthetic operational telemetry, not inference
+usage, tenant billing, a multi-broker production topology, or an availability
+SLO. The GenAI receiver remains a Kubernetes-discovered target and the worker
+metrics require the optional worker overlay.
+
 ## Production boundary
 
 Before production use, provide TLS termination, managed credentials or

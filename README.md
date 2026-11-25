@@ -86,8 +86,10 @@ make grafana-up
 Open Grafana at `http://127.0.0.1:13000`. The profile provisions a
 Prometheus datasource with UID `prometheus` and both dashboards into the
 `LLM Telemetry` folder. Verify provisioning and authentication with
-`make grafana-smoke`; stop the isolated profile with `make grafana-down`.
-This is a loopback-only developer profile, not a production HA/SLO deployment.
+`make grafana-smoke`; run the real Kafka → Prometheus → provisioned Grafana
+acceptance with `make grafana-live-smoke`; stop the isolated profile with
+`make grafana-down`. This is a loopback-only developer profile, not a
+production HA/SLO deployment.
 See [M14 Grafana provisioning](docs/m14-grafana-provisioning.md) for the
 security boundary and scrape prerequisites. The GenAI worker panels need the
 optional worker overlay; receiver panels need the Kubernetes receiver scrape
