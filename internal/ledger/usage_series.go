@@ -35,6 +35,7 @@ func usageSeriesStep(from, to time.Time, granularity string) (time.Duration, err
 // window, including empty buckets. A single SQL statement supplies the
 // populated buckets, ensuring one consistent PostgreSQL read snapshot.
 func (s *Store) UsageSeries(ctx context.Context, tenant, project string, from, to time.Time, granularity string) ([]UsageBucket, error) {
+	if s == nil || s.DB == nil { return nil, errors.New("ledger database is required") }
 	return queryUsageSeries(ctx,s.DB,baseUsageRelation,tenant,project,from,to, granularity)
 }
 
@@ -44,7 +45,6 @@ func queryUsageSeries(ctx context.Context, db usageQueryDB, relation usageRelati
 	if strings.TrimSpace(tenant) == "" || strings.TrimSpace(project) == "" {
 		return nil, errors.New("tenant and project are required")
 	}
-	if s == nil || s.DB == nil { return nil, errors.New("ledger database is required") }
 	from, to = from.UTC(), to.UTC()
 	result := make([]UsageBucket, int(to.Sub(from)/step))
 	for i := range result {
