@@ -30,7 +30,18 @@ func run(args []string, out io.Writer) error {
 	flags.SetOutput(io.Discard)
 	usagePath := flags.String("usage","","JSON model usage breakdown")
 	pricePath := flags.String("prices","","JSON price snapshot")
-	if err := flags.Parse(args); err != nil || flags.NArg() != 0 || *usagePath == "" || *pricePath == "" {
+	schedule := flags.String("schedule","","JSON historical price period array")
+	from := flags.String("from","","historical window start RFC3339")
+	to := flags.String("to","","historical window end RFC3339")
+	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
+		return errors.New("usage: usage-cost-estimate --usage usage.json --prices prices.json OR --schedule schedule.json --from RFC3339 --to RFC3339")
+	}
+	if *schedule!="" || *from!="" || *to!="" {
+		if *usagePath!="" || *pricePath!="" { return errors.New("choose either offline or historical mode") }
+		if *schedule=="" || *from=="" || *to=="" { return errors.New("historical mode requires --schedule, --from and --to") }
+		return runHistorical(*schedule,*from,*to,out)
+	}
+	if *usagePath=="" || *pricePath=="" {
 		return errors.New("usage: usage-cost-estimate --usage usage.json --prices prices.json")
 	}
 	var models []ledger.ModelUsage

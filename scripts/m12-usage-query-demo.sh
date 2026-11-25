@@ -46,6 +46,7 @@ done
 go build -o "$tmp/generator" ./cmd/event-generator
 go build -o "$tmp/ingest" ./cmd/usage-ledger-ingest
 go build -o "$tmp/query" ./cmd/usage-query-api
+go build -o "$tmp/cost" ./cmd/usage-cost-estimate
 "$tmp/generator" --count 16 --seed m12-demo --start 2026-11-21T00:00:00Z > "$tmp/events.ndjson"
 for i in 1 2; do
   "$tmp/ingest" --dsn 'postgres://telemetry:localdev-only@127.0.0.1:15432/telemetry?sslmode=disable' < "$tmp/events.ndjson"
@@ -107,7 +108,40 @@ assert read("series.json") == [
 print(json.dumps({"summary": read("summary.json"), "models": read("models.json"),
                   "series": read("series.json")}, indent=2))
 PY
+# Fictional rates change between the two scoped events (0ms and 80ms).
+cat > "$tmp/schedule.json" <<'JSON'
+[
+  {"from":"2026-11-21T00:00:00Z","to":"2026-11-21T00:00:00.040Z","table":{"version":"demo-v1","currency":"USD","rates":[{"model":"Qwen3-32B","input_per_million":"2.5","output_per_million":"10"}]}},
+  {"from":"2026-11-21T00:00:00.040Z","to":"2026-11-21T02:00:00Z","table":{"version":"demo-v2","currency":"USD","rates":[{"model":"Qwen3-32B","input_per_million":"5","output_per_million":"20"}]}}
+]
+JSON
+historical_cost() {
+  USAGE_QUERY_DATABASE_URL="postgres://m12_demo_reader:$password@127.0.0.1:15432/telemetry?sslmode=disable" \
+    USAGE_QUERY_TENANT_ID=tenant_001 USAGE_QUERY_PROJECT_ID=project_001 \
+    "$tmp/cost" --schedule "$tmp/schedule.json" --from 2026-11-21T00:00:00Z --to 2026-11-21T02:00:00Z
+}
+historical_cost > "$tmp/history.json"
+python3 - "$tmp/history.json" <<'PY'
+import json, sys
+with open(sys.argv[1]) as f:
+    report = json.load(f)
+assert report["tenant_id"] == "tenant_001"
+assert report["project_id"] == "project_001"
+assert report["currency"] == "USD"
+assert report["total_cost"] == "0.002450000000"
+assert len(report["windows"]) == 2
+assert [w["estimate"]["price_version"] for w in report["windows"]] == ["demo-v1", "demo-v2"]
+assert [w["estimate"]["total_cost"] for w in report["windows"]] == ["0.000750000000", "0.001700000000"]
+assert report["windows"][0]["to"] == report["windows"][1]["from"]
+print(json.dumps(report, indent=2))
+PY
 pg -c "DELETE FROM public.usage_query_scope_bindings WHERE login_role='m12_demo_reader'" >/dev/null
+if historical_cost > "$tmp/revoked-cost.json" 2>"$tmp/revoked-cost.err"; then
+  echo 'revoked historical cost query unexpectedly succeeded' >&2
+  exit 1
+fi
+[[ ! -s "$tmp/revoked-cost.json" ]]
+echo 'PASS: historical scoped cost CLI, exact price transition and revoked binding'
 for url in "$base?$window" "$base/models?$window" "$base/series?$window&granularity=hour"; do
   request "$url" 503 "$tmp/error.json"
   python3 - "$tmp/error.json" <<'PY'
