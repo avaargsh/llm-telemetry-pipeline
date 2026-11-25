@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/avaargsh/llm-telemetry-pipeline/internal/finops"
 	"github.com/avaargsh/llm-telemetry-pipeline/internal/ledger"
@@ -67,6 +68,7 @@ func readJSON(path string, target any) error {
 	if err != nil || !info.Mode().IsRegular() { return errors.New("expected regular input file") }
 	data,err := io.ReadAll(io.LimitReader(f,maxInputBytes+1))
 	if err != nil || len(data) > maxInputBytes { return errors.New("input unreadable or too large") }
+	if !utf8.Valid(data) { return errors.New("invalid UTF-8 input") }
 	// encoding/json normally accepts repeated object keys. Reject them
 	// before typed decoding, including case variants of struct field names.
 	check := json.NewDecoder(bytes.NewReader(data))
@@ -92,6 +94,11 @@ func scanValue(dec *json.Decoder, depth int) error {
 			if err != nil { return err }
 			name,ok := key.(string)
 			if !ok { return errors.New("invalid JSON key") }
+			// All accepted schema field names are ASCII. Reject Unicode aliases
+			// (such as long s) before encoding/json can fold them onto a field.
+			for _, r := range name {
+				if r > 127 { return errors.New("non-ASCII JSON key") }
+			}
 			name = strings.ToLower(name)
 			if seen[name] { return errors.New("duplicate JSON key") }
 			seen[name] = true
