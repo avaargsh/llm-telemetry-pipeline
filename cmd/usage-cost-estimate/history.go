@@ -20,10 +20,11 @@ import (
 type scopedHistoricalOutput struct {
 	TenantID string `json:"tenant_id"`
 	ProjectID string `json:"project_id"`
+	PriceRegistryVerified bool `json:"price_registry_verified,omitempty"`
 	finops.HistoricalEstimate
 }
 
-func runHistorical(path, fromText, toText string,bindings priceBindings,out io.Writer) error {
+func runHistorical(path, fromText, toText string,bindings priceBindings,verifyRegistry bool,out io.Writer) error {
 	from,err := time.Parse(time.RFC3339Nano,fromText)
 	if err != nil { return errors.New("invalid historical time window") }
 	to,err := time.Parse(time.RFC3339Nano,toText)
@@ -54,12 +55,18 @@ func runHistorical(path, fromText, toText string,bindings priceBindings,out io.W
 	db.SetMaxOpenConns(1)
 	reader,err := ledger.NewScopedUsageReader(ctx,db,tenant,project)
 	if err != nil { return errors.New("query database scope readiness failed") }
-	estimate,err := finops.EstimateScopedHistory(ctx,reader,tenant,project,from,to,periods)
+	var estimate finops.HistoricalEstimate
+	if verifyRegistry {
+		estimate,err = finops.EstimateVerifiedHistory(ctx,reader,tenant,project,from,to,periods)
+	} else {
+		estimate,err = finops.EstimateScopedHistory(ctx,reader,tenant,project,from,to,periods)
+	}
 	if err != nil {
+		if errors.Is(err,ledger.ErrPriceVersionNotFound) || errors.Is(err,ledger.ErrPriceVersionMismatch) || errors.Is(err,ledger.ErrInvalidPriceExpectation) { return err }
 		if errors.Is(err,finops.ErrMissingRate) || errors.Is(err,finops.ErrInvalidEstimate) || errors.Is(err,finops.ErrUsageWindowMismatch) { return err }
 		return errors.New("historical ledger query failed")
 	}
 	enc := json.NewEncoder(out)
 	enc.SetIndent("","  ")
-	return enc.Encode(scopedHistoricalOutput{TenantID:tenant,ProjectID:project,HistoricalEstimate:estimate})
+	return enc.Encode(scopedHistoricalOutput{TenantID:tenant,ProjectID:project,PriceRegistryVerified:verifyRegistry,HistoricalEstimate:estimate})
 }
