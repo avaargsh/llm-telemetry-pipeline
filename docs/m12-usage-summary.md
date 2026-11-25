@@ -59,7 +59,7 @@ The runtime binds loopback by default and requires a certificate and key
 for non-loopback listeners. The first runtime slice uses one tenant/project
 credential per instance; the handler supports multiple credential
 bindings. Shared deployment,
-pagination, scoped database roles/RLS, query indexing and scale
+pagination, scoped database roles/RLS and scale
 validation are subsequent work. The application scope check is not a
 database row-level security guarantee. Do not expose this prototype to
 untrusted networks without deployment security and load validation.
@@ -94,7 +94,7 @@ breakdown returns HTTP 422 with error `usage_model_limit_exceeded` and no
 partial totals. Narrow the time window or use the overall summary; model
 pagination is not implemented. The five-second query deadline and all
 scope validation remain unchanged. This bounds returned rows, not database
-scan work; the index and load validation are still outstanding.
+scan work; load validation remains outstanding.
 
 ## M12.3: UTC hourly and daily series
 
@@ -121,3 +121,28 @@ not proof that upstream telemetry is complete. A single SQL read
 supplies the populated buckets; later arrivals can change a subsequent
 query. UTC days are always 24 hours; local calendar days and daylight
 saving boundaries are not supported. This is not a production SLO.
+
+## M12.4: scoped ledger query index
+
+Migration `006_usage_ledger_scope_event_time_index.sql` creates a
+non-unique B-tree on (tenant_id, project_id, event_time). It matches the
+equality predicates and half-open time range shared by the summary, model
+and series queries. It does not change usage identity, write transaction
+semantics, authorization or query results.
+
+Fresh disposable Compose databases apply the migration in lexical order.
+Existing volumes require explicit migration through the approved rollout
+process; initialization mounts do not upgrade existing databases.
+The standard CREATE INDEX takes a lock that conflicts with writes.
+For a large or continuously written database, plan a maintenance window
+or a separately reviewed concurrent build procedure outside a transaction.
+Do not blindly retry a failed concurrent build; inspect index validity
+and readiness. Do not skip validation merely because an index name exists.
+
+The PostgreSQL integration test checks the actual index catalog:
+valid and ready, non-unique B-tree, full index, and exact ordered key
+columns. This is schema evidence, not a latency benchmark. PostgreSQL
+may legitimately choose a sequential scan for a small or non-selective
+window. Measure EXPLAIN (ANALYZE, BUFFERS), index size, write throughput,
+WAL volume and representative query latency before claiming a performance
+improvement or setting a production SLO.
