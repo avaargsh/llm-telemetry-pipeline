@@ -3,6 +3,8 @@ package ledger
 import (
 	"context"
 	"crypto/rand"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -96,4 +98,50 @@ func TestUsageSummaryAuthoritativeScopeAndHalfOpenWindow(t *testing.T) {
 	noModels, err := s.UsageByModel(ctx, tenant, "missing", start, end)
 	if err != nil || noModels == nil || len(noModels) != 0 { t.Fatalf("empty models: %+v %v", noModels, err) }
 
+}
+
+func TestUsageByModelRejectsOverflowWithoutPartialTotals(t *testing.T) {
+	db := testDB(t)
+	s := &Store{DB: db}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	start := time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC)
+	tenant := "m12-model-limit-" + rand.Text()
+	project := "project-a"
+	t.Cleanup(func() {
+		c, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		for _, query := range []string{
+			"DELETE FROM event_outbox WHERE event_id IN (SELECT event_id FROM usage_ledger WHERE tenant_id=$1)",
+			"DELETE FROM usage_ledger WHERE tenant_id=$1",
+		} {
+			if _, err := db.ExecContext(c, query, tenant); err != nil {
+				t.Errorf("fixture cleanup: %v", err)
+			}
+		}
+	})
+	for i := 0; i <= MaxUsageModels; i++ {
+		e, err := event.SyntheticUsageEvent(tenant, i, start)
+		if err != nil { t.Fatal(err) }
+		e.TenantID, e.ProjectID, e.Model = tenant, project, fmt.Sprintf("model-%03d", i)
+		e.Timestamp = start
+		if err := e.Seal(); err != nil { t.Fatal(err) }
+		if out, err := s.Record(ctx, e); err != nil || out != Created {
+			t.Fatalf("record: %s %v", out, err)
+		}
+		if i == MaxUsageModels-1 {
+			rows, err := s.UsageByModel(ctx, tenant, project, start, start.Add(time.Hour))
+			if err != nil || len(rows) != MaxUsageModels {
+				t.Fatalf("at limit: %d rows, %v", len(rows), err)
+			}
+		}
+	}
+	rows, err := s.UsageByModel(ctx, tenant, project, start, start.Add(time.Hour))
+	if !errors.Is(err, ErrUsageModelLimit) || rows != nil {
+		t.Fatalf("overflow must not expose partial totals: %d rows, %v", len(rows), err)
+	}
+	summary, err := s.UsageSummary(ctx, tenant, project, start, start.Add(time.Hour))
+	if err != nil || summary.RequestCount != int64(MaxUsageModels+1) {
+		t.Fatalf("overall summary must remain complete: %+v %v", summary, err)
+	}
 }
