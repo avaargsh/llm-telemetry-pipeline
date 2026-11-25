@@ -31,7 +31,10 @@ service; it does not own the usage Ledger, Outbox, Kafka or ClickHouse path.
 Apply migrations in lexical order, including
 `003_genai_observation_delivery_receipts.sql` before deploying M11.6/M11.7
 durable writers, receivers or workers. Then apply
-`004_genai_observation_runtime_roles.sql`.
+`004_genai_observation_runtime_roles.sql` followed by
+`005_genai_observation_receipt_expiry_atomic.sql` for M11.8.
+Migration 005 makes receipt expiry and both persisted receipt counters atomic;
+it does not reconcile pre-existing drift. See the [M11.8 migration contract](m11-durable-observation-queue.md).
 
 Migration 004 creates two `NOLOGIN` capability roles:
 
@@ -145,6 +148,8 @@ same migrations, assumes the receiver capability role, and proves sender
 lease recovery and receiver deduplication across independent databases.
 The migration is automatically applied by the repository's disposable Compose
 PostgreSQL environment on a fresh volume. Existing databases must apply
-migrations 003 and 004 explicitly before deploying new binaries.
+all outstanding migrations through 005 explicitly through an approved migration
+process before deploying the current binaries. An existing Compose volume is
+not upgraded by the initialization mount.
 
 No production availability, latency SLO, RPO or RTO is claimed by these tests.
