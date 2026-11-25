@@ -133,3 +133,10 @@ including periods outside the query, must match its expected version digest
 before any database connection is opened. Omission retains the existing
 unbound mode. This does not pin effective period boundaries, establish a
 trusted rate source, or persist immutable versions across deployments.
+
+### Unicode scalar identity
+
+All cost input JSON files, including price-binding manifests, reject unpaired
+UTF-16 surrogate escapes before decoding. Valid surrogate pairs, explicit
+U+FFFD and escaped backslashes remain supported. This prevents silent
+replacement from aliasing malformed model or version identities.
