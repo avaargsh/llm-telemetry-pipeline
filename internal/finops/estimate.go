@@ -3,8 +3,12 @@
 package finops
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"math/big"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/avaargsh/llm-telemetry-pipeline/internal/ledger"
@@ -39,6 +43,7 @@ type ModelCost struct {
 type CostEstimate struct {
 	Currency string `json:"currency"`
 	PriceVersion string `json:"price_version"`
+	PriceFingerprint string `json:"price_fingerprint"`
 	Models []ModelCost `json:"models"`
 	TotalCost string `json:"total_cost"`
 }
@@ -66,7 +71,7 @@ func Estimate(models []ledger.ModelUsage, table PriceTable) (CostEstimate, error
 		if !ok { return CostEstimate{}, ErrInvalidEstimate }
 		rates[r.Model] = rate{in,out}
 	}
-	result := CostEstimate{Currency:table.Currency, PriceVersion:table.Version, Models:make([]ModelCost,0,len(models))}
+	result := CostEstimate{Currency:table.Currency, PriceVersion:table.Version, PriceFingerprint:priceFingerprint(table.Currency,rates), Models:make([]ModelCost,0,len(models))}
 	seen := make(map[string]bool,len(models))
 	total := new(big.Int)
 	for _, m := range models {
@@ -92,6 +97,32 @@ func Estimate(models []ledger.ModelUsage, table PriceTable) (CostEstimate, error
 	}
 	result.TotalCost = formatCost(total)
 	return result,nil
+}
+
+// priceFingerprint binds the complete validated rate table, not the usage
+// rows or the caller-selected version label. Byte-length framing prevents
+// ambiguous field boundaries; integer microdollars remove decimal aliases.
+func priceFingerprint(currency string, rates map[string]rate) string {
+	h := sha256.New()
+	writeField := func(value string) {
+		// hash.Hash.Write never returns an error.
+		_, _ = h.Write([]byte(strconv.Itoa(len(value)) + ":" + value))
+	}
+	writeField("llm-telemetry/price-table/v1")
+	writeField(currency)
+	writeField(strconv.Itoa(len(rates)))
+	models := make([]string, 0, len(rates))
+	for model := range rates {
+		models = append(models, model)
+	}
+	sort.Strings(models)
+	for _, model := range models {
+		r := rates[model]
+		writeField(model)
+		writeField(r.input.String())
+		writeField(r.output.String())
+	}
+	return "sha256:" + hex.EncodeToString(h.Sum(nil))
 }
 
 func validModel(s string) bool {

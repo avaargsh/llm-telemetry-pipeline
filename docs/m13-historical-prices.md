@@ -115,3 +115,12 @@ aliases are rejected before typed decoding. Unicode string values remain
 supported. This prevents ambiguous rate/version overrides caused by Go JSON
 field matching; it is not a persisted price catalog or tariff authenticity
 check.
+
+### Price content identity (M13.6)
+
+Each window's estimate includes `price_fingerprint` alongside the version
+label. It uses the canonical v1 price-table digest documented in
+[m13-cost-estimate.md](m13-cost-estimate.md). The clipped interval bounds
+remain separate evidence; this digest does not identify the whole schedule,
+its effective periods, ledger snapshot, or tariff provenance. A persisted
+version registry and price schedule governance remain future work.
