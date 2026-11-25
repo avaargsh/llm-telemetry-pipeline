@@ -17,11 +17,13 @@ type summaryReader struct {
 	from, to time.Time
 	calls int
 	modelErr error
+	scopeErr error
 }
 
 func (r *summaryReader) UsageSummary(_ context.Context, tenant, project string, from, to time.Time) (ledger.UsageSummary, error) {
 	r.tenant, r.project, r.from, r.to = tenant, project, from, to
 	r.calls++
+	if r.scopeErr != nil { return ledger.UsageSummary{}, r.scopeErr }
 	return ledger.UsageSummary{RequestCount: 2, PromptTokens: "20", CompletionTokens: "6", TotalTokens: "26"}, nil
 }
 
@@ -63,6 +65,7 @@ func TestUsageQueryCredentialScopeAndWindow(t *testing.T) {
 func (r *summaryReader) UsageByModel(_ context.Context, tenant, project string, from, to time.Time) ([]ledger.ModelUsage, error) {
 	r.tenant, r.project, r.from, r.to = tenant, project, from, to
 	r.calls++
+	if r.scopeErr != nil { return nil, r.scopeErr }
 	if r.modelErr != nil { return nil, r.modelErr }
 	return []ledger.ModelUsage{{Model: "model-a", UsageSummary: ledger.UsageSummary{RequestCount: 1, PromptTokens: "10", CompletionTokens: "3", TotalTokens: "13"}}}, nil
 }
@@ -120,6 +123,7 @@ func TestUsageQueryModelErrorsAreExplicitAndRedacted(t *testing.T) {
 func (r *summaryReader) UsageSeries(_ context.Context, tenant, project string, from, to time.Time, granularity string) ([]ledger.UsageBucket, error) {
 	r.tenant, r.project, r.from, r.to = tenant, project, from, to
 	r.calls++
+	if r.scopeErr != nil { return nil, r.scopeErr }
 	if granularity != "hour" { return nil, errors.New("unexpected granularity") }
 	return []ledger.UsageBucket{{BucketStart: from, UsageSummary: ledger.UsageSummary{RequestCount: 1, PromptTokens: "10", CompletionTokens: "3", TotalTokens: "13"}}}, nil
 }
@@ -151,4 +155,33 @@ func TestUsageQueryTimeSeries(t *testing.T) {
 		}
 	}
 	if r.calls != 1 || r.tenant != "tenant-a" || r.project != "project-a" { t.Fatalf("reader=%+v", r) }
+}
+
+func TestUsageQueryRevokedDatabaseScopeFailsClosed(t *testing.T) {
+	r := &summaryReader{}
+	h, err := NewUsageQueryHandler(r, []Credential{{Token:testToken,TenantID:"tenant-a",ProjectID:"project-a"}})
+	if err != nil { t.Fatal(err) }
+	window := "?from=2026-11-21T00:00:00Z&to=2026-11-21T01:00:00Z"
+	paths := []string{"/v1/usage-summary"+window,"/v1/usage-summary/models"+window,"/v1/usage-summary/series"+window+"&granularity=hour"}
+	for _, path := range paths {
+		req := httptest.NewRequest(http.MethodGet,path,nil)
+		req.Header.Set("Authorization","Bearer "+testToken)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr,req)
+		if rr.Code != http.StatusOK { t.Fatalf("before revocation: %s %d",path,rr.Code) }
+	}
+	r.scopeErr = ledger.ErrUsageQueryScope
+	for _, path := range paths {
+		req := httptest.NewRequest(http.MethodGet,path,nil)
+		req.Header.Set("Authorization","Bearer "+testToken)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr,req)
+		var body map[string]string
+		if err := json.Unmarshal(rr.Body.Bytes(),&body); err != nil { t.Fatal(err) }
+		if rr.Code != http.StatusServiceUnavailable || len(body) != 1 || body["error"] != "ledger_query_unavailable" ||
+			rr.Header().Get("Cache-Control") != "no-store" || rr.Header().Get("Retry-After") != "1" {
+			t.Fatalf("after revocation: %s status=%d body=%s headers=%v",path,rr.Code,rr.Body.String(),rr.Header())
+		}
+	}
+	if r.calls != 6 { t.Fatalf("reader calls=%d",r.calls) }
 }

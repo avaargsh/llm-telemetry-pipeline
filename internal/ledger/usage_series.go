@@ -35,12 +35,16 @@ func usageSeriesStep(from, to time.Time, granularity string) (time.Duration, err
 // window, including empty buckets. A single SQL statement supplies the
 // populated buckets, ensuring one consistent PostgreSQL read snapshot.
 func (s *Store) UsageSeries(ctx context.Context, tenant, project string, from, to time.Time, granularity string) ([]UsageBucket, error) {
+	if s == nil || s.DB == nil { return nil, errors.New("ledger database is required") }
+	return queryUsageSeries(ctx,s.DB,baseUsageRelation,tenant,project,from,to, granularity)
+}
+
+func queryUsageSeries(ctx context.Context, db usageQueryDB, relation usageRelation, tenant, project string, from, to time.Time, granularity string) ([]UsageBucket, error) {
 	step, err := usageSeriesStep(from, to, granularity)
 	if err != nil { return nil, err }
 	if strings.TrimSpace(tenant) == "" || strings.TrimSpace(project) == "" {
 		return nil, errors.New("tenant and project are required")
 	}
-	if s == nil || s.DB == nil { return nil, errors.New("ledger database is required") }
 	from, to = from.UTC(), to.UTC()
 	result := make([]UsageBucket, int(to.Sub(from)/step))
 	for i := range result {
@@ -49,12 +53,12 @@ func (s *Store) UsageSeries(ctx context.Context, tenant, project string, from, t
 			UsageSummary: UsageSummary{PromptTokens:"0", CompletionTokens:"0", TotalTokens:"0"},
 		}
 	}
-	rows, err := s.DB.QueryContext(ctx, `
+	rows, err := db.QueryContext(ctx, `
 SELECT date_trunc($5, event_time, 'UTC') AS bucket, count(*),
        coalesce(sum(prompt_tokens), 0)::text,
        coalesce(sum(completion_tokens), 0)::text,
        (coalesce(sum(prompt_tokens), 0) + coalesce(sum(completion_tokens), 0))::text
-FROM public.usage_ledger
+FROM `+string(relation)+`
 WHERE tenant_id = $1 AND project_id = $2
   AND event_time >= $3 AND event_time < $4
 GROUP BY 1
