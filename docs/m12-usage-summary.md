@@ -153,3 +153,37 @@ and valid on the primary, streaming standby and promoted standby. This
 includes index maintenance in the measured write/failover path; older
 measurements without the index are not directly comparable. The scripts
 do not claim index-specific latency improvement.
+
+## M12.5a: database login scope foundation (not yet wired to runtime)
+
+Migration `007_usage_query_database_scope.sql` introduces a non-login
+reader group, an administrator-managed mapping from authenticated database
+login to exactly one tenant/project, and two security-barrier views:
+
+- `public.usage_query_scope`: the login's own binding.
+- `public.usage_query_ledger`: only the columns and rows needed for
+  scoped aggregation; an unbound login sees no rows.
+
+The views use PostgreSQL session_user, not caller-supplied settings or a
+SET ROLE target. The reader group has SELECT on these views and no grants
+on the underlying ledger, outbox or binding table. The administrator must
+provision a unique dedicated login per project, with no broader inherited
+roles or direct grants, and maintain the mapping through a reviewed
+process. Do not reuse login names without removing obsolete bindings.
+Keep view/table ownership trusted and audit effective privileges, including
+PUBLIC grants. The views are not row-level security on usage_ledger and
+do not modify the existing writer's permissions.
+
+Fresh Compose databases apply 007 in lexical order; existing databases
+need an explicit migration. The physical HA write-only lab intentionally
+does not provision reader accounts. The integration test uses disposable
+transactional role and row fixtures, switches session authorization and
+checks scope visibility and effective privileges. It rolls back the
+fixtures. This is not a production deployment or penetration-test result.
+
+The current usage-query-api still uses the original direct ledger query
+path. The next slice must route all three endpoints through the scoped
+view, verify the configured HTTP binding against the database login on
+startup and reject privileged or mismatched connections before serving.
+Do not change the service DSN to the new restricted login until that
+integration is complete.
