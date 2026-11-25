@@ -6,6 +6,22 @@ cd "$(dirname "$0")/.."
 for tool in go docker curl python3 openssl; do
   command -v "$tool" >/dev/null || { echo "missing prerequisite: $tool" >&2; exit 1; }
 done
+# Keep the usual defaults while allowing another local stack to retain its ports.
+export TELEMETRY_POSTGRES_HOST_PORT="${TELEMETRY_POSTGRES_HOST_PORT:-15432}"
+query_port="${USAGE_QUERY_DEMO_PORT:-18086}"
+validate_port() {
+  local label="$1" port="$2"
+  if [[ ! "$port" =~ ^[1-9][0-9]{0,4}$ ]] || (( port > 65535 )); then
+    echo "$label must be a TCP port from 1 to 65535" >&2
+    exit 1
+  fi
+}
+validate_port TELEMETRY_POSTGRES_HOST_PORT "$TELEMETRY_POSTGRES_HOST_PORT"
+validate_port USAGE_QUERY_DEMO_PORT "$query_port"
+if [[ "$TELEMETRY_POSTGRES_HOST_PORT" == "$query_port" ]]; then
+  echo 'PostgreSQL and usage query demo ports must differ' >&2
+  exit 1
+fi
 docker compose version >/dev/null
 export COMPOSE_PROJECT_NAME="llmtelemetry-query-demo-$$-$(openssl rand -hex 4)"
 compose=(docker compose -f deployments/docker-compose.yml)
@@ -49,7 +65,7 @@ go build -o "$tmp/query" ./cmd/usage-query-api
 go build -o "$tmp/cost" ./cmd/usage-cost-estimate
 "$tmp/generator" --count 16 --seed m12-demo --start 2026-11-21T00:00:00Z > "$tmp/events.ndjson"
 for i in 1 2; do
-  "$tmp/ingest" --dsn 'postgres://telemetry:localdev-only@127.0.0.1:15432/telemetry?sslmode=disable' < "$tmp/events.ndjson"
+  "$tmp/ingest" --dsn "postgres://telemetry:localdev-only@127.0.0.1:$TELEMETRY_POSTGRES_HOST_PORT/telemetry?sslmode=disable" < "$tmp/events.ndjson"
 done
 [[ "$(pg -tAc 'SELECT count(*) FROM public.usage_ledger')" == 16 ]]
 [[ "$(pg -tAc 'SELECT count(*) FROM public.event_outbox WHERE published_at IS NULL')" == 16 ]]
@@ -63,11 +79,11 @@ GRANT llm_telemetry_usage_query_reader TO m12_demo_reader;
 INSERT INTO public.usage_query_scope_bindings(login_role,tenant_id,project_id)
 VALUES ('m12_demo_reader','tenant_001','project_001');
 SQL
-USAGE_QUERY_DATABASE_URL="postgres://m12_demo_reader:$password@127.0.0.1:15432/telemetry?sslmode=disable" \
+USAGE_QUERY_DATABASE_URL="postgres://m12_demo_reader:$password@127.0.0.1:$TELEMETRY_POSTGRES_HOST_PORT/telemetry?sslmode=disable" \
   USAGE_QUERY_TOKEN="$token" USAGE_QUERY_TENANT_ID=tenant_001 USAGE_QUERY_PROJECT_ID=project_001 \
-  "$tmp/query" --listen 127.0.0.1:18086 > "$tmp/api.log" 2>&1 &
+  "$tmp/query" --listen "127.0.0.1:$query_port" > "$tmp/api.log" 2>&1 &
 api_pid=$!
-base='http://127.0.0.1:18086/v1/usage-summary'
+base="http://127.0.0.1:$query_port/v1/usage-summary"
 window='from=2026-11-21T00:00:00Z&to=2026-11-21T02:00:00Z'
 request() {
   local url="$1" expected="$2" output="$3" auth="${4:-yes}"
@@ -116,7 +132,7 @@ cat > "$tmp/schedule.json" <<'JSON'
 ]
 JSON
 historical_cost() {
-  USAGE_QUERY_DATABASE_URL="postgres://m12_demo_reader:$password@127.0.0.1:15432/telemetry?sslmode=disable" \
+  USAGE_QUERY_DATABASE_URL="postgres://m12_demo_reader:$password@127.0.0.1:$TELEMETRY_POSTGRES_HOST_PORT/telemetry?sslmode=disable" \
     USAGE_QUERY_TENANT_ID=tenant_001 USAGE_QUERY_PROJECT_ID=project_001 \
     "$tmp/cost" --schedule "$tmp/schedule.json" --from 2026-11-21T00:00:00Z --to 2026-11-21T02:00:00Z
 }

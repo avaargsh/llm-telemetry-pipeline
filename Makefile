@@ -142,3 +142,23 @@ genai-observation-worker:
 # Disposable PostgreSQL-only demonstration; uses localhost ports 15432/18086.
 usage-query-demo:
 	bash scripts/m12-usage-query-demo.sh
+
+
+.PHONY: grafana-up grafana-down grafana-smoke
+
+# Local-only Prometheus + Grafana profile. GRAFANA_ADMIN_PASSWORD is mandatory.
+grafana-up:
+	docker compose -f deployments/docker-compose.yml -f deployments/docker-compose-observability.yml -f deployments/docker-compose-grafana.yml up -d prometheus grafana
+
+grafana-down:
+	docker compose -f deployments/docker-compose.yml -f deployments/docker-compose-observability.yml -f deployments/docker-compose-grafana.yml down
+
+# Disposable authenticated Grafana provisioning/API acceptance test.
+grafana-smoke:
+	bash scripts/m14-grafana-provisioning-smoke.sh
+
+.PHONY: grafana-live-smoke
+
+# Real disposable Kafka -> lag-exporter -> Prometheus -> Grafana dashboard acceptance.
+grafana-live-smoke:
+	bash scripts/m14-grafana-live-smoke.sh

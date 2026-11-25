@@ -1,0 +1,31 @@
+name: m14-grafana-provisioning
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/m14-grafana-provisioning.yml"
+      - "deployments/docker-compose-grafana.yml"
+      - "deployments/grafana/**"
+      - "scripts/m14-grafana-provisioning-smoke.sh"
+      - "scripts/m14_dashboard_promql_fixture.py"
+      - "scripts/m14_genai_dashboard_promql_fixture.py"
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  grafana-provisioning:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GRAFANA_ADMIN_USER: telemetry-ci
+      GRAFANA_ADMIN_PASSWORD: ci-only-provisioning-smoke-password
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact tested HEAD
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Provision Grafana and verify authenticated API
+        run: bash scripts/m14-grafana-provisioning-smoke.sh

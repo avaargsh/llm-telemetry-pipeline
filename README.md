@@ -4,6 +4,8 @@
 
 > **Distribution status:** This public repository does **not yet contain an explicit open-source `LICENSE`**. Do not assume unrestricted reuse, redistribution or community contribution rights. See [OSS readiness and provenance gates](docs/oss-readiness.md) and [Issue #26](https://github.com/avaargsh/llm-telemetry-pipeline/issues/26) for the required maintainer ownership review and license decision.
 
+> **Grafana status (2026-11-25):** M14.1 Kafka and M14.2 GenAI dashboards, M14.4 authenticated local provisioning, and M14.5 live Kafka→Prometheus→Grafana acceptance are merged and CI verified (PRs #93–#96). M14.3 authoritative usage/FinOps visualization remains deferred until persisted tariff versions and a project-scoped reporting API exist.
+
 Go + Kafka (KRaft) + ClickHouse + PostgreSQL for reliable multi-tenant LLM inference usage telemetry.
 
 ## Architecture and authority
@@ -53,10 +55,14 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 ## Usage query quickstart (M12)
 
 Run a self-contained demo using Go 1.27.4+, Docker Compose, Bash, curl,
-Python 3, OpenSSL and Make. Local ports 15432 and 18086 must be free.
+Python 3, OpenSSL and Make. It uses local PostgreSQL port 15432 and HTTP
+port 18086 by default.
 
 ```bash
 make usage-query-demo
+
+# If those ports are already occupied, choose two different free loopback ports:
+TELEMETRY_POSTGRES_HOST_PORT=25432 USAGE_QUERY_DEMO_PORT=28086 make usage-query-demo
 ```
 
 The demo builds the actual generator, ledger writer and query API, creates a
@@ -71,6 +77,29 @@ and removes its own project/volumes on exit; it does not start Kafka or
 ClickHouse. Never point it at production data. See
 [M12 usage query contract and deployment](docs/m12-usage-summary.md) for
 manual operation, migrations and credential configuration.
+
+## Grafana dashboards quickstart (M14)
+
+The Kafka operator and GenAI receiver/worker dashboards are provisioned by
+the local Grafana profile. Export a unique password before starting:
+
+```bash
+export GRAFANA_ADMIN_USER=telemetry-admin
+export GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 32)"
+make grafana-up
+```
+
+Open Grafana at `http://127.0.0.1:13000`. The profile provisions a
+Prometheus datasource with UID `prometheus` and both dashboards into the
+`LLM Telemetry` folder. Verify provisioning and authentication with
+`make grafana-smoke`; run the real Kafka → Prometheus → provisioned Grafana
+acceptance with `make grafana-live-smoke`; stop the isolated profile with
+`make grafana-down`. This is a loopback-only developer profile, not a
+production HA/SLO deployment.
+See [M14 Grafana provisioning](docs/m14-grafana-provisioning.md) for the
+security boundary and scrape prerequisites. The GenAI worker panels need the
+optional worker overlay; receiver panels need the Kubernetes receiver scrape
+configuration.
 
 ## Current capabilities
 

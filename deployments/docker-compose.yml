@@ -40,7 +40,7 @@ services:
       POSTGRES_USER: telemetry
       POSTGRES_PASSWORD: localdev-only
     ports:
-      - "127.0.0.1:15432:5432"
+      - "127.0.0.1:${TELEMETRY_POSTGRES_HOST_PORT:-15432}:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ../migrations/postgres:/docker-entrypoint-initdb.d:ro
