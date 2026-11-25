@@ -69,5 +69,22 @@ class ExactCheckoutTests(unittest.TestCase):
         self.assertIn(expected, source)
 
 
+    def test_all_workflows_pin_each_checkout_to_exact_head(self):
+        root = Path(__file__).resolve().parent.parent / '.github' / 'workflows'
+        paths = sorted((*root.glob('*.yml'), *root.glob('*.yaml')))
+        self.assertTrue(paths)
+        for path in paths:
+            with self.subTest(workflow=path.name):
+                source = path.read_text(encoding='utf-8')
+                count = source.count('uses: actions/checkout@')
+                self.assertGreater(count, 0)
+                self.assertEqual(count, source.count(
+                    'ref: ${{ github.event.pull_request.head.sha || github.sha }}'))
+                assertions = sum(source.count(
+                    'test "$(git rev-parse HEAD)" = "${0}"'.format(key))
+                    for key in ('EXPECTED_SHA', 'EXPECTED_HEAD'))
+                self.assertEqual(count, assertions)
+
+
 if __name__ == '__main__':
     unittest.main()
