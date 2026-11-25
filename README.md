@@ -50,6 +50,28 @@ make ledger-ingest
 
 To run the existing direct-to-Kafka M1 smoke path, use `make publish` in terminal C instead.
 
+## Usage query quickstart (M12)
+
+Run a self-contained demo using Go 1.27.4+, Docker Compose, Bash, curl,
+Python 3, OpenSSL and Make. Local ports 15432 and 18086 must be free.
+
+```bash
+make usage-query-demo
+```
+
+The demo builds the actual generator, ledger writer and query API, creates a
+fresh isolated PostgreSQL Compose project, applies migrations, inserts and
+replays 16 synthetic events, provisions a restricted project login, and
+checks all three authenticated HTTP query endpoints. Expected scoped totals:
+2 requests, 408 prompt tokens, 58 completion tokens, 466 total tokens.
+The second hourly bucket is empty. It verifies rejection of unauthenticated
+and scope-override requests, then revokes the database binding and requires
+all three endpoints to return 503. The demo prints synthetic query results
+and removes its own project/volumes on exit; it does not start Kafka or
+ClickHouse. Never point it at production data. See
+[M12 usage query contract and deployment](docs/m12-usage-summary.md) for
+manual operation, migrations and credential configuration.
+
 ## Current capabilities
 
 - Stable Event IDs, v1 schema, SHA-256 payload sealing and deterministic synthetic generator.
