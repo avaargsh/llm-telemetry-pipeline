@@ -4,6 +4,8 @@
 
 > **Distribution status:** This public repository does **not yet contain an explicit open-source `LICENSE`**. Do not assume unrestricted reuse, redistribution or community contribution rights. See [OSS readiness and provenance gates](docs/oss-readiness.md) and [Issue #26](https://github.com/avaargsh/llm-telemetry-pipeline/issues/26) for the required maintainer ownership review and license decision.
 
+> **Grafana status (2026-11-25):** M14.1 Kafka and M14.2 GenAI dashboards, M14.4 authenticated local provisioning, and M14.5 live Kafka→Prometheus→Grafana acceptance are merged and CI verified (PRs #93–#96). M14.3 authoritative usage/FinOps visualization remains deferred until persisted tariff versions and a project-scoped reporting API exist.
+
 Go + Kafka (KRaft) + ClickHouse + PostgreSQL for reliable multi-tenant LLM inference usage telemetry.
 
 ## Architecture and authority
