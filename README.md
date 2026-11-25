@@ -22,6 +22,14 @@ The ledger transaction is the **only accepted billing record**. Kafka events and
 
 ## Quick start (local demonstration)
 
+To generate ten deterministic, synthetic usage events without starting any services, use Go 1.27.4 or later and run:
+
+```bash
+make sample > sample.ndjson
+```
+
+The output is newline-delimited JSON, one event per line. This checks event generation only; nothing is written to the ledger or published to Kafka.
+
 Requirements: Go 1.27.4 or later, Docker Engine with Compose. CI and Docker build stages validate the selected Go patch version; this is not a deployed production upgrade.
 
 ```bash
