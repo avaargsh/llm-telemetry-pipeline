@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -32,6 +33,14 @@ func TestVerifiedUsageSnapshotRealLogin(t *testing.T) {
 	t.Cleanup(func() {
 		c, stop := context.WithTimeout(context.Background(), 15*time.Second)
 		defer stop()
+		for _, q := range []string{
+			"DELETE FROM public.event_outbox WHERE event_id IN (SELECT event_id FROM public.usage_ledger WHERE tenant_id=$1)",
+			"DELETE FROM public.usage_ledger WHERE tenant_id=$1",
+		} {
+			if _, err := admin.ExecContext(c, q, tenant); err != nil {
+				t.Errorf("usage fixture cleanup: %v", err)
+			}
+		}
 		if _, err := admin.ExecContext(c, "REVOKE ALL ON public.price_version_registry FROM "+ident); err != nil {
 			t.Errorf("grant cleanup: %v", err)
 		}
@@ -86,6 +95,18 @@ func TestVerifiedUsageSnapshotRealLogin(t *testing.T) {
 		got[0].Models[0].PromptTokens!="10" || got[1].Models==nil || len(got[1].Models)!=0 {
 		t.Fatalf("verified capture: %+v %v",got,err)
 	}
+	plain, err := reader.UsageByModelWindows(ctx, tenant, project, windows)
+	if err != nil || !reflect.DeepEqual(plain, got) {
+		t.Fatalf("plain and verified capture differ: %+v %+v %v", plain, got, err)
+	}
+	if fpGot, err := reader.PriceVersionFingerprint(ctx, tenant, project, "v1"); err != nil || fpGot != fp {
+		t.Fatalf("standalone lookup: %q %v", fpGot, err)
+	}
+	exec("GRANT SELECT ON public.price_version_registry TO " + ident)
+	if got, err := reader.VerifiedUsageByModelWindows(ctx, tenant, project, windows, valid); got != nil || !errors.Is(err, ErrUsageQueryScope) {
+		t.Fatalf("overprivileged snapshot: %+v %v", got, err)
+	}
+	exec("REVOKE SELECT ON public.price_version_registry FROM " + ident)
 	for _, tc := range []struct{
 		name string
 		bindings []PriceVersionExpectation
