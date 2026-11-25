@@ -11,6 +11,16 @@ import (
 
 func TestUsageSeriesUTCWindowsAndEmptyBuckets(t *testing.T) {
 	db := testDB(t)
+	// Keep this disposable test pool on a single session, with a non-UTC
+	// database timezone. UTC aggregation must not depend on session defaults.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	if _, err := db.Exec("SET TIME ZONE 'America/Los_Angeles'"); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := db.Exec("RESET TIME ZONE"); err != nil { t.Errorf("reset timezone: %v", err) }
+	})
 	s := &Store{DB: db}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -75,5 +85,35 @@ func TestUsageSeriesRejectsInvalidWindows(t *testing.T) {
 		{start,start.Add(32*24*time.Hour),"day"},
 	} {
 		if _, err := usageSeriesStep(tc.from,tc.to,tc.granularity); err == nil { t.Fatalf("accepted %+v",tc) }
+	}
+}
+
+func TestUsageSeriesFullEmptyWindowAndOffsetEquivalence(t *testing.T) {
+	db := testDB(t)
+	s := &Store{DB: db}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	from := time.Date(2026, 11, 21, 8, 0, 0, 0, time.FixedZone("UTC+8", 8*60*60))
+	to := from.Add(MaxUsageWindow)
+	tenant := "m12-empty-" + rand.Text()
+	for _, tc := range []struct{
+		granularity string
+		step time.Duration
+		count int
+	}{
+		{"hour", time.Hour, 744},
+		{"day", 24*time.Hour, 31},
+	} {
+		rows, err := s.UsageSeries(ctx, tenant, "p", from, to, tc.granularity)
+		if err != nil || len(rows) != tc.count {
+			t.Fatalf("%s: count=%d err=%v",tc.granularity,len(rows),err)
+		}
+		for i, row := range rows {
+			want := from.UTC().Add(time.Duration(i)*tc.step)
+			if row.BucketStart.Location() != time.UTC || !row.BucketStart.Equal(want) ||
+				row.UsageSummary != (UsageSummary{PromptTokens:"0", CompletionTokens:"0", TotalTokens:"0"}) {
+				t.Fatalf("%s bucket %d: %+v",tc.granularity,i,row)
+			}
+		}
 	}
 }
