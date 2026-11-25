@@ -79,6 +79,7 @@ func readJSON(path string, target any) error {
 	data,err := io.ReadAll(io.LimitReader(f,maxInputBytes+1))
 	if err != nil || len(data) > maxInputBytes { return errors.New("input unreadable or too large") }
 	if !utf8.Valid(data) { return errors.New("invalid UTF-8 input") }
+	if !validUnicodeEscapes(data) { return errors.New("invalid Unicode escape") }
 	// encoding/json normally accepts repeated object keys. Reject them
 	// before typed decoding, including case variants of struct field names.
 	check := json.NewDecoder(bytes.NewReader(data))

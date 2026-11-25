@@ -63,3 +63,35 @@ func TestHistoricalPriceBindingsCheckAllPeriodsBeforeDatabase(t *testing.T) {
 		if err==nil || err.Error()!=tc.want || out.Len()!=0{t.Fatalf("want %q got %v out=%s",tc.want,err,out.String())}
 	}
 }
+
+
+// A malformed manifest version must not alias a legitimate U+FFFD version.
+func TestPriceBindingsRejectLossyVersionIdentity(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bindings.json")
+	const fp = "sha256:433d2e0b10d8481699f2a2353f26bef71f057dd2cb08dc7069c026c0d7cc3cd5"
+	for _, tc := range []struct {
+		name, version string
+		valid bool
+	}{
+		{"unpaired high", "\\ud800", false},
+		{"unpaired low", "\\udfff", false},
+		{"explicit replacement", "\\ufffd", true},
+		{"valid pair", "\\ud83d\\ude80", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := "[{\"version\":\"" + tc.version + "\",\"price_fingerprint\":\"" + fp + "\"}]"
+			if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := readPriceBindings(path)
+			if tc.valid {
+				if err != nil || len(got) != 1 {
+					t.Fatalf("valid binding rejected: %v", err)
+				}
+			} else if err == nil || got != nil {
+				t.Fatalf("lossy binding accepted: %v err=%v", got, err)
+			}
+		})
+	}
+}
