@@ -136,3 +136,9 @@ m9-pg-ha-sustained-tests:
 # GENAI_OBSERVATION_RECEIVER_TOKEN in the environment.
 genai-observation-worker:
 	go run ./cmd/genai-observation-worker
+
+.PHONY: usage-query-demo
+
+# Disposable PostgreSQL-only demonstration; uses localhost ports 15432/18086.
+usage-query-demo:
+	bash scripts/m12-usage-query-demo.sh
