@@ -56,7 +56,7 @@ Do not commit `.env` files or receiver credentials. The local PostgreSQL passwor
 
 ## Migration and verification
 
-Apply `migrations/postgres/003_genai_observation_delivery_receipts.sql` before starting any M11.6 `DurableStore` writer, receiver or worker against an existing database. The M11.6 store reads the delivery-receipt counter for both keyed and non-keyed admission paths. Fresh disposable Compose databases apply it automatically from the migration mount.
+Apply `migrations/postgres/003_genai_observation_delivery_receipts.sql` before starting any M11.6 `DurableStore` writer, receiver or worker against an existing database. The M11.6 store reads the delivery-receipt counter for both keyed and non-keyed admission paths. For the current M11.8 runtime, apply all outstanding migrations in lexical order through `005_genai_observation_receipt_expiry_atomic.sql`, including migration 004 for capability roles. Migration 005 preserves the expiry function signature and atomically updates receipt counters; it does not repair pre-existing drift. Fresh disposable Compose databases apply migrations automatically from the migration mount; already initialized volumes require an explicit approved migration. See [M11.8 migration contract](m11-durable-observation-queue.md).
 
 Run the receiver key semantics and sender/receiver fault test with PostgreSQL:
 
