@@ -16,8 +16,12 @@
 | M2d | Authorized DLQ redrive, retention/ACLs, audit | **NOT IMPLEMENTED** |
 | M4a | Actual Prometheus→Alertmanager webhook firing and resolved notifications | **PASS/MERGED**: 3 alerts × firing/resolved = 6 deliveries; real Prometheus/Alertmanager, 12/12 CI ([PR #22](https://github.com/avaargsh/llm-telemetry-pipeline/pull/22)) |
 | M4a+ | Live Kafka group offsets and retention risk → Alertmanager webhook firing/resolution | **PASS/MERGED**: 3 live alerts × firing/resolved and full 13/13 combined CI ([PR #21](https://github.com/avaargsh/llm-telemetry-pipeline/pull/21)) |
-| M4b | Further Grafana dashboards, end-to-end P95/P99, sustained saturation and production authenticated on-call/HA/SLO | **NOT IMPLEMENTED** |
-
+| M4b | Further Grafana dashboards, end-to-end P95/P99, sustained saturation and production authenticated on-call/HA/SLO | **PARTIAL**: M14.1/M14.2 dashboards and M14.4/M14.5 provisioning/live acceptance merged; end-to-end P95/P99, sustained saturation and production on-call/HA/SLO remain NOT IMPLEMENTED |
+| M14.1 | Kafka operator Grafana dashboard (7 panels) | **PASS/MERGED**: PR #93, 21/21 CI; exact PromQL executed by pinned Prometheus 3.5.0 fixtures; merged `ac62c4c` |
+| M14.2 | GenAI receiver/worker dashboard (14 panels) | **PASS/MERGED**: PR #94, 22/22 CI; stale queue gauges are gated by sample availability; exact PromQL tested; merged `adbcfdc` |
+| M14.3 | Authoritative usage/FinOps dashboard | **NOT IMPLEMENTED**: current historical rates are caller-supplied CLI JSON, not a persisted tariff catalog or scoped reporting API; do not chart estimated charges from raw ClickHouse/Prometheus sums |
+| M14.4 | Local Grafana provisioning and authenticated Compose profile | **PASS/MERGED**: PR #95, 24/24 CI; real Grafana 12.2.0 container verified datasource, both provisioned dashboards and anonymous API rejection; merged `d448296` |
+| M14.5 | Live Kafka → lag exporter → Prometheus → provisioned Grafana dashboard | **PASS/MERGED**: PR #96, 22/22 CI; synthetic topic had 20 records, group committed 8, observed lag 12; Prometheus scrape success=1 and dashboard query=12; merged `92d553b` |
 ## Ground rules
 
 - Financial totals always come from PostgreSQL `usage_ledger`, not raw ClickHouse sums.
