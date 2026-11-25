@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 
 from ci_workflow_policy import audit_workflows
 
@@ -49,6 +50,23 @@ class WorkflowPolicyTests(unittest.TestCase):
     def test_existing_path_filtered_and_scheduled_workflows_are_allowed(self):
         source = GOOD.replace('  pull_request:\n', '  pull_request:\n    paths:\n      - "internal/**"\n  schedule:\n    - cron: "17 3 * * 1"\n')
         self.assertEqual(self.audit(source), [])
+
+
+class ExactCheckoutTests(unittest.TestCase):
+    def test_live_alerts_checks_exact_head_before_running_tests(self):
+        path = Path(__file__).resolve().parent.parent / '.github' / 'workflows' / 'm4-alertmanager-e2e.yml'
+        source = path.read_text(encoding='utf-8')
+        expected = '''    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact tested HEAD
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-go@v5'''
+        self.assertEqual(source.count('uses: actions/checkout@'), 1)
+        self.assertIn(expected, source)
 
 
 if __name__ == '__main__':
