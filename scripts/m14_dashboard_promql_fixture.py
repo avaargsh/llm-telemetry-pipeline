@@ -12,7 +12,11 @@ def main():
     dashboard = json.loads(DASHBOARD.read_text())
     panels = {p["id"]: p for p in dashboard["panels"]}
     assert set(panels) == set(range(1, 8))
-    assert len(dashboard["__inputs"]) == 1
+    assert "__inputs" not in dashboard
+    for panel in panels.values():
+        assert panel["datasource"]["uid"] == "prometheus"
+        for target in panel["targets"]:
+            assert target["datasource"]["uid"] == "prometheus"
     series = [
         {"series": f'up{{{TARGET}}}', "values": "1 1 0 1"},
         {"series": f'llm_telemetry_lag_scrape_success{{{TARGET}}}', "values": "1 0 1 1"},

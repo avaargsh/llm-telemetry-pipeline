@@ -9,7 +9,11 @@ def main():
     dashboard = json.loads(DASHBOARD.read_text())
     panels = {p["id"]: p for p in dashboard["panels"]}
     assert set(panels) == set(range(1, 15)), "dashboard panel IDs changed"
-    assert len(dashboard["__inputs"]) == 1
+    assert "__inputs" not in dashboard
+    for panel in panels.values():
+        assert panel["datasource"]["uid"] == "prometheus"
+        for target in panel["targets"]:
+            assert target["datasource"]["uid"] == "prometheus"
     def expr(panel, target=0):
         return panels[panel]["targets"][target]["expr"]
 

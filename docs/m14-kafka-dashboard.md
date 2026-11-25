@@ -1,9 +1,9 @@
 # M14.1 Kafka operator dashboard
 
-Import `deployments/grafana/dashboards/kafka-operator.json` through
-Grafana Dashboards → New → Import, and select an existing Prometheus
-data source configured for the operator monitoring stack. This slice
-does not deploy Grafana or configure its authentication.
+The preferred deployment is the M14.4 file-provisioned Grafana profile
+(`docs/m14-grafana-provisioning.md`). The dashboard JSON uses the stable
+Prometheus datasource UID `prometheus`; a manual import requires a datasource
+with that UID. This dashboard definition alone does not deploy Grafana.
 
 The dashboard expects the existing `lag-exporter` scrape job
 (`deployments/prometheus/prometheus.yml`). Use the M3e and M4 documented
