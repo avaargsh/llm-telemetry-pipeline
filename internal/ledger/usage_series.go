@@ -75,3 +75,9 @@ ORDER BY 1
 	if err := rows.Err(); err != nil { return nil, err }
 	return result, nil
 }
+
+// ValidateUsageSeriesWindow validates the public series query before I/O.
+func ValidateUsageSeriesWindow(from, to time.Time, granularity string) error {
+	_, err := usageSeriesStep(from, to, granularity)
+	return err
+}
