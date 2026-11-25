@@ -64,6 +64,7 @@ func TestUsageSummaryAuthoritativeScopeAndHalfOpenWindow(t *testing.T) {
 		if err != nil { t.Fatal(err) }
 		e.TenantID, e.ProjectID, e.Timestamp = row.tenant, row.project, row.at
 		e.PromptTokens, e.CompletionTokens = 10, 3
+		if i == 0 { e.Model = "model-a" } else { e.Model = "model-b" }
 		if err := e.Seal(); err != nil { t.Fatal(err) }
 		if out, err := s.Record(ctx, e); err != nil || out != Created {
 			t.Fatalf("record: %s %v", out, err)
@@ -82,4 +83,17 @@ func TestUsageSummaryAuthoritativeScopeAndHalfOpenWindow(t *testing.T) {
 	if empty.RequestCount != 0 || empty.PromptTokens != "0" || empty.CompletionTokens != "0" || empty.TotalTokens != "0" {
 		t.Fatalf("wrong empty aggregate: %+v", empty)
 	}
+	models, err := s.UsageByModel(ctx, tenant, project, start, end)
+	if err != nil { t.Fatal(err) }
+	if len(models) != 2 || models[0].Model != "model-a" || models[1].Model != "model-b" {
+		t.Fatalf("wrong model ordering or scope: %+v", models)
+	}
+	for _, row := range models {
+		if row.RequestCount != 1 || row.PromptTokens != "10" || row.CompletionTokens != "3" || row.TotalTokens != "13" {
+			t.Fatalf("wrong model aggregate: %+v", row)
+		}
+	}
+	noModels, err := s.UsageByModel(ctx, tenant, "missing", start, end)
+	if err != nil || noModels == nil || len(noModels) != 0 { t.Fatalf("empty models: %+v %v", noModels, err) }
+
 }
