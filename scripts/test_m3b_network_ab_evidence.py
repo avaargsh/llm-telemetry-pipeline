@@ -13,6 +13,8 @@ evidence=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(evidence)
 
 HEAD="deadbeef"
+IMAGE_BASE="apache/kafka:4.1.0@sha256:"+"a"*64
+IMAGE_CANDIDATE="apache/kafka:4.1.2@sha256:"+"b"*64
 def receipt():
     return {"exact_head":HEAD,"result":"PASS_EXPERIMENT_ONLY",
             "scenario":"two_voter_parallel_restart", "initial_isr":3,
@@ -30,10 +32,52 @@ def sockets():
             "sample_count":8,"captured_nodes":["broker1","broker2","broker3"],
             "unique_observed_controller_peers":["172.29.241.11","172.29.241.12"]}
 
-def nodes(ips):
-    return {"nodes": {f"broker{i}":{"container_ipv4":ip} for i,ip in enumerate(ips,1)}}
+def nodes(ips, image_ref=IMAGE_BASE, java="21.0.8+9-LTS"):
+    return {
+        "exact_head": HEAD, "identity_verdict": "PASS_IDENTITY",
+        "nodes": {
+            f"broker{i}": {
+                "container_ipv4": ip,
+                "image_ref": image_ref,
+                "image_id": "sha256:" + "c"*64,
+                "java_runtime": {"java.runtime.version": java},
+            } for i, ip in enumerate(ips, 1)
+        },
+    }
 
 class NetworkABContract(unittest.TestCase):
+    def test_detached_receipts_distinguish_image_bundles_in_same_network_mode(self):
+        ips = ["172.22.0.11", "172.22.0.12", "172.22.0.13"]
+        failed = receipt()
+        failed["result"] = "INCOMPLETE"
+        for ref, java in ((IMAGE_BASE, "21.0.8+9-LTS"),
+                          (IMAGE_CANDIDATE, "21.0.10+7-LTS")):
+            snap = nodes(ips, image_ref=ref, java=java)
+            with self.subTest(ref=ref):
+                passed = evidence.assess("dynamic", HEAD, receipt(), audit(), sockets(), snap, snap)
+                incomplete = evidence.assess_failed_run(
+                    "dynamic", HEAD, failed, audit(), sockets(), snap, snap)
+                for result in (passed, incomplete):
+                    self.assertEqual(result["profile"], "dynamic")
+                    self.assertEqual(result["runtime_bundle"], {
+                        "kafka_image_ref": ref, "docker_image_id": "sha256:" + "c"*64,
+                        "java_runtime_version": java,
+                    })
+                    self.assertFalse(result["causal_root_cause_proven"])
+
+    def test_refuse_missing_mixed_or_wrong_head_runtime_snapshot(self):
+        ips = ["172.22.0.11", "172.22.0.12", "172.22.0.13"]
+        good = nodes(ips)
+        mixed = nodes(ips)
+        mixed["nodes"]["broker2"]["image_ref"] = IMAGE_CANDIDATE
+        missing = nodes(ips)
+        del missing["nodes"]["broker2"]["java_runtime"]
+        wrong = nodes(ips)
+        wrong["exact_head"] = "different"
+        for snap in (mixed, missing, wrong, nodes(ips, image_ref=IMAGE_CANDIDATE)):
+            with self.subTest(snapshot=snap), self.assertRaises(ValueError):
+                evidence.assess("pinned", HEAD, receipt(), audit(), sockets(), good, snap)
+
     def test_non_string_ipv4_evidence_rejected(self):
         for value in (2887122955, True, False):
             malformed=nodes([value,"172.22.0.12","172.22.0.13"])

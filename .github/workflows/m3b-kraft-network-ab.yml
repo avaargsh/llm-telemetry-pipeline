@@ -4,6 +4,8 @@ on:
     paths:
       - ".github/workflows/m3b-kraft-network-ab.yml"
       - "deployments/docker-compose-ha-dynamic.yml"
+      - "deployments/docker-compose-ha-4.1.2.yml"
+      - "deployments/docker-compose-ha-dynamic-4.1.2.yml"
       - "deployments/docker-compose-ha-dns-ttl-zero.yml"
       - "deployments/m3b-dns-ttl-zero.security"
       - "scripts/m3b_dns_ttl_experiment.py"
@@ -31,18 +33,29 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        profile: [pinned, dynamic, dynamic-ttl-zero]
+        profile: [pinned, pinned-4.1.2, dynamic, dynamic-4.1.2, dynamic-ttl-zero]
         trial: [1, 2, 3]
         include:
           - profile: pinned
             mode: pinned
             compose: deployments/docker-compose-ha.yml
+            image_ref: apache/kafka:4.1.0@sha256:bff074a5d0051dbc0bbbcd25b045bb1fe84833ec0d3c7c965d1797dd289ec88f
+          - profile: pinned-4.1.2
+            mode: pinned
+            compose: deployments/docker-compose-ha-4.1.2.yml
+            image_ref: apache/kafka:4.1.2@sha256:5cc2a2fd93fa2687b44015eee04fb2c3edd9e526bd64bf8bec5ff1e268772e0e
           - profile: dynamic
             mode: dynamic
             compose: deployments/docker-compose-ha-dynamic.yml
+            image_ref: apache/kafka:4.1.0@sha256:bff074a5d0051dbc0bbbcd25b045bb1fe84833ec0d3c7c965d1797dd289ec88f
+          - profile: dynamic-4.1.2
+            mode: dynamic
+            compose: deployments/docker-compose-ha-dynamic-4.1.2.yml
+            image_ref: apache/kafka:4.1.2@sha256:5cc2a2fd93fa2687b44015eee04fb2c3edd9e526bd64bf8bec5ff1e268772e0e
           - profile: dynamic-ttl-zero
             mode: dynamic-ttl-zero
             compose: deployments/docker-compose-ha-dns-ttl-zero.yml
+            image_ref: apache/kafka:4.1.0@sha256:bff074a5d0051dbc0bbbcd25b045bb1fe84833ec0d3c7c965d1797dd289ec88f
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -77,6 +90,7 @@ jobs:
         env:
           M3B_NETWORK_AB_MODE: ${{ matrix.mode }}
           M3B_HA_COMPOSE_FILE: ${{ matrix.compose }}
+          M3B_EXPECTED_KAFKA_IMAGE_REF: ${{ matrix.image_ref }}
           M3B_KRAFT_DIAGNOSTICS_DIR: /tmp/m3b-parallel-kraft-diagnostics
           M3B_PARALLEL_REPORT_PATH: /tmp/m3b-parallel-restart-report.json
         run: bash scripts/m3b-kraft-parallel-smoke.sh
