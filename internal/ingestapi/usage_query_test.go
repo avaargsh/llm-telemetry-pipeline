@@ -3,6 +3,7 @@ package ingestapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -15,6 +16,7 @@ type summaryReader struct {
 	tenant, project string
 	from, to time.Time
 	calls int
+	modelErr error
 }
 
 func (r *summaryReader) UsageSummary(_ context.Context, tenant, project string, from, to time.Time) (ledger.UsageSummary, error) {
@@ -61,6 +63,7 @@ func TestUsageQueryCredentialScopeAndWindow(t *testing.T) {
 func (r *summaryReader) UsageByModel(_ context.Context, tenant, project string, from, to time.Time) ([]ledger.ModelUsage, error) {
 	r.tenant, r.project, r.from, r.to = tenant, project, from, to
 	r.calls++
+	if r.modelErr != nil { return nil, r.modelErr }
 	return []ledger.ModelUsage{{Model: "model-a", UsageSummary: ledger.UsageSummary{RequestCount: 1, PromptTokens: "10", CompletionTokens: "3", TotalTokens: "13"}}}, nil
 }
 
@@ -88,4 +91,28 @@ func TestUsageQueryModelBreakdown(t *testing.T) {
 		}
 	}
 	if r.calls != 1 || r.tenant != "tenant-a" || r.project != "project-a" { t.Fatalf("reader=%+v", r) }
+}
+
+func TestUsageQueryModelErrorsAreExplicitAndRedacted(t *testing.T) {
+	for _, tc := range []struct {
+		err error
+		status int
+		code string
+	}{
+		{ledger.ErrUsageModelLimit, http.StatusUnprocessableEntity, "usage_model_limit_exceeded"},
+		{errors.New("private database detail"), http.StatusServiceUnavailable, "ledger_query_unavailable"},
+	} {
+		r := &summaryReader{modelErr: tc.err}
+		h, err := NewUsageQueryHandler(r, []Credential{{Token: testToken, TenantID: "tenant-a", ProjectID: "project-a"}})
+		if err != nil { t.Fatal(err) }
+		req := httptest.NewRequest(http.MethodGet, "/v1/usage-summary/models?from=2026-11-21T00:00:00Z&to=2026-11-21T01:00:00Z", nil)
+		req.Header.Set("Authorization", "Bearer "+testToken)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		var body map[string]string
+		if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil { t.Fatal(err) }
+		if rr.Code != tc.status || body["error"] != tc.code || len(body) != 1 || r.calls != 1 {
+			t.Fatalf("status=%d body=%s calls=%d", rr.Code, rr.Body.String(), r.calls)
+		}
+	}
 }
