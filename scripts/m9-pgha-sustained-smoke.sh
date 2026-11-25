@@ -67,10 +67,13 @@ with pathlib.Path(sys.argv[1]).open("a",encoding="utf-8") as f:
 PY
 }
 # Establish the existing M7 synchronous physical standby before starting traffic.
+index_ready_sql="SELECT EXISTS (SELECT 1 FROM pg_index WHERE indexrelid=to_regclass('public.idx_usage_ledger_scope_event_time') AND indrelid='public.usage_ledger'::regclass AND indisvalid AND indisready)"
 "${compose[@]}" up -d pg-primary
 ready pg-primary 'SELECT count(*) FROM usage_ledger' 0
+ready pg-primary "$index_ready_sql" t
 "${compose[@]}" up -d pg-standby
 ready pg-standby 'SELECT pg_is_in_recovery()' t 120
+ready pg-standby "$index_ready_sql" t
 ready pg-primary "SELECT count(*) FROM pg_stat_replication WHERE application_name='standby1' AND state='streaming'" 1
 pgsql pg-primary "ALTER SYSTEM SET synchronous_standby_names='FIRST 1 (standby1)'" >/dev/null
 pgsql pg-primary "ALTER SYSTEM SET synchronous_commit='remote_apply'" >/dev/null
@@ -184,6 +187,7 @@ mark_event primary_isolated
 [[ "$(pgsql pg-standby 'SELECT pg_is_in_recovery()')" == t ]] || exit 1
 "${compose[@]}" exec -T -u postgres pg-standby pg_ctl -D /var/lib/postgresql/data promote
 ready pg-standby 'SELECT pg_is_in_recovery()' f 60
+ready pg-standby "$index_ready_sql" t
 mark_event promoted
 # Explicit manual client/Relay endpoint change: NO automatic HA claim.
 kill "$api_pid" "$relay_pid" 2>/dev/null || true

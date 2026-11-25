@@ -27,10 +27,12 @@ pgsql() {
   local server="$1" statement="$2"
   "${compose[@]}" exec -T "$server" psql -U telemetry -d telemetry -v ON_ERROR_STOP=1 -tAc "$statement"
 }
+index_ready_sql="SELECT EXISTS (SELECT 1 FROM pg_index WHERE indexrelid=to_regclass('public.idx_usage_ledger_scope_event_time') AND indrelid='public.usage_ledger'::regclass AND indisvalid AND indisready)"
 ready=0
 "${compose[@]}" up -d pg-primary
 for i in $(seq 1 100);do
-  if [[ "$(pgsql pg-primary 'SELECT count(*) FROM usage_ledger' 2>/dev/null)" == 0 ]];then
+  if [[ "$(pgsql pg-primary 'SELECT count(*) FROM usage_ledger' 2>/dev/null)" == 0 ]] &&
+     [[ "$(pgsql pg-primary "$index_ready_sql" 2>/dev/null)" == t ]];then
     ready=1;break
   fi
   sleep 2
@@ -46,6 +48,7 @@ for i in $(seq 1 120);do
   sleep 2
 done
 if (( ready == 0 ));then echo 'physical standby is not streaming' >&2;exit 1;fi
+[[ "$(pgsql pg-standby "$index_ready_sql")" == t ]] || { echo 'standby ledger index missing or invalid' >&2;exit 1; }
 
 # AFTER the standby connects, opt the lab into synchronous replication and
 # remote_apply, so successful Ledger.Commit was applied on the hot standby.
@@ -108,6 +111,7 @@ for i in $(seq 1 60);do
   sleep 1
 done
 if (( ready == 0 ));then echo 'standby promotion timeout' >&2;exit 1;fi
+[[ "$(pgsql pg-standby "$index_ready_sql")" == t ]] || { echo 'promoted ledger index missing or invalid' >&2;exit 1; }
 
 out="${M7_PGHA_EVIDENCE_PATH:-artifacts/m7-pgha-failover.json}"
 if [[ "$out" != /* ]];then out="$PWD/$out";fi
