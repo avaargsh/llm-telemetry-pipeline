@@ -23,7 +23,7 @@ type scopedHistoricalOutput struct {
 	finops.HistoricalEstimate
 }
 
-func runHistorical(path, fromText, toText string,out io.Writer) error {
+func runHistorical(path, fromText, toText string,bindings priceBindings,out io.Writer) error {
 	from,err := time.Parse(time.RFC3339Nano,fromText)
 	if err != nil { return errors.New("invalid historical time window") }
 	to,err := time.Parse(time.RFC3339Nano,toText)
@@ -33,6 +33,13 @@ func runHistorical(path, fromText, toText string,out io.Writer) error {
 		return errors.New("invalid schedule file: expected a non-null price period array")
 	}
 	if _,err := finops.PlanPriceWindows(from,to,periods);err != nil { return err }
+	if bindings != nil {
+		for _, period := range periods {
+			estimate,err := finops.Estimate(nil,period.Table)
+			if err != nil { return err }
+			if err := bindings.verify(estimate); err != nil { return err }
+		}
+	}
 	dsn := os.Getenv("USAGE_QUERY_DATABASE_URL")
 	if dsn=="" { return errors.New("USAGE_QUERY_DATABASE_URL is required") }
 	tenant,project := os.Getenv("USAGE_QUERY_TENANT_ID"),os.Getenv("USAGE_QUERY_PROJECT_ID")

@@ -100,3 +100,29 @@ This identifies effective price content; it is not a digest of the original
 JSON bytes, an immutable version registry, a signature, a proof of provider
 price authenticity, or an invoice. Retain the original source and version
 label; a future catalog must enforce version-to-content binding separately.
+
+## Optional version-content verification (M13.7)
+
+An independently maintained JSON manifest can pin each price version to
+its expected canonical content fingerprint. For the fictional example above,
+save the following as bindings.json:
+
+```json
+[{"version":"example-v1","price_fingerprint":"sha256:433d2e0b10d8481699f2a2353f26bef71f057dd2cb08dc7069c026c0d7cc3cd5"}]
+```
+
+```sh
+go run ./cmd/usage-cost-estimate --usage usage.json --prices prices.json \\
+  --price-bindings bindings.json
+```
+
+When the option is supplied, the entire manifest must be a valid non-null
+array with at most 1,000 distinct exact version labels, each paired with a
+canonical lowercase `sha256:` digest. Missing versions, digest mismatches,
+duplicate labels (even identical bindings) and malformed entries fail closed
+with no estimate. Unused valid entries are allowed. The existing strict JSON
+file limits apply. The option is optional for backwards compatibility; its
+absence does not verify version ownership. Keep the trusted manifest separate
+from the price file under independent change control. This is verification
+against caller-supplied expectations, not a persisted registry, source
+signature, access-control boundary or proof of tariff authenticity.

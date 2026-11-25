@@ -124,3 +124,12 @@ label. It uses the canonical v1 price-table digest documented in
 remain separate evidence; this digest does not identify the whole schedule,
 its effective periods, ledger snapshot, or tariff provenance. A persisted
 version registry and price schedule governance remain future work.
+
+### Optional version-content verification (M13.7)
+
+Pass `--price-bindings bindings.json` using the manifest format documented in
+[m13-cost-estimate.md](m13-cost-estimate.md). Every supplied schedule period,
+including periods outside the query, must match its expected version digest
+before any database connection is opened. Omission retains the existing
+unbound mode. This does not pin effective period boundaries, establish a
+trusted rate source, or persist immutable versions across deployments.
