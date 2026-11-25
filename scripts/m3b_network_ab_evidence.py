@@ -11,7 +11,10 @@ import ipaddress
 import json
 import os
 import pathlib
+import re
 import tempfile
+
+from m3b_kraft_diagnostics import KAFKA_IMAGE_REF_PATTERN
 
 NODES = ("broker1","broker2","broker3")
 MODES = {"pinned","dynamic","dynamic-ttl-zero"}
@@ -40,6 +43,28 @@ def _ip_map(snapshot):
         values[node] = ip
     ensure(len(set(values.values()))==3,"duplicate Docker container addresses")
     return values
+
+
+def _runtime_bundle(before, after, head):
+    observed = set()
+    for snapshot in (before, after):
+        ensure(snapshot.get("exact_head") == head
+               and snapshot.get("identity_verdict") == "PASS_IDENTITY",
+               "missing verified runtime identity for exact head")
+        for node in NODES:
+            row = snapshot["nodes"][node]
+            image_ref, image_id = row.get("image_ref"), row.get("image_id")
+            java = row.get("java_runtime")
+            java_version = java.get("java.runtime.version") if isinstance(java, dict) else None
+            ensure(isinstance(image_ref, str) and KAFKA_IMAGE_REF_PATTERN.fullmatch(image_ref)
+                   and isinstance(image_id, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", image_id)
+                   and isinstance(java_version, str) and java_version.strip(),
+                   "missing digest-qualified Kafka image or observed Java runtime")
+            observed.add((image_ref, image_id, java_version))
+    ensure(len(observed) == 1, "runtime bundle differs across brokers or fault phases")
+    image_ref, image_id, java_version = observed.pop()
+    return {"kafka_image_ref": image_ref, "docker_image_id": image_id,
+            "java_runtime_version": java_version}
 
 
 def observe(profile, head, audit, sockets, before, after):
@@ -101,6 +126,7 @@ def observe(profile, head, audit, sockets, before, after):
         exposure="NO_ADDRESS_CHANGE_OBSERVED"
     return {
         "schema_version":1, "exact_head":head, "profile":profile,
+        "runtime_bundle":_runtime_bundle(before,after,head),
         "endpoint_exposure":exposure,
         "ip_changed_nodes":changed, "reassigned_addresses":reassigned,
         "cross_target_voter_request_count":count,
