@@ -30,6 +30,7 @@ Expected output:
 {
   "currency": "USD",
   "price_version": "example-v1",
+  "price_fingerprint": "sha256:433d2e0b10d8481699f2a2353f26bef71f057dd2cb08dc7069c026c0d7cc3cd5",
   "models": [
     {"model":"Qwen3-32B","input_cost":"0.001020000000","output_cost":"0.000580000000","total_cost":"0.001600000000"}
   ],
@@ -78,3 +79,24 @@ go test -race ./...
 Tests include exact sub-cent costs, token totals beyond uint64,
 explicit zero rates, missing prices, duplicate and invalid inputs,
 and the file-based command entry point. This is not production billing.
+
+## Price content identity (M13.6)
+
+Every successful estimate includes an additive `price_fingerprint` field.
+It binds the complete validated rate table, including unused models, rather
+than just the caller-provided price version. Equivalent decimal spellings,
+rate order, version labels and usage inputs do not change the fingerprint.
+Model names are exact (not case-folded or Unicode-normalized).
+
+Canonical v1 encoding: concatenate each field as its decimal **byte** length,
+a colon, then the exact field bytes. Fields, in order, are the domain tag
+`llm-telemetry/price-table/v1`, currency, decimal rate count, then each exact
+model name, input rate and output rate. Sort model names by Go string byte
+order; encode rates as canonical nonnegative integer microdollars per million
+tokens. Hash the resulting bytes using SHA-256 and render lowercase hex with
+a `sha256:` prefix. A fixed vector appears in the example above.
+
+This identifies effective price content; it is not a digest of the original
+JSON bytes, an immutable version registry, a signature, a proof of provider
+price authenticity, or an invoice. Retain the original source and version
+label; a future catalog must enforce version-to-content binding separately.
