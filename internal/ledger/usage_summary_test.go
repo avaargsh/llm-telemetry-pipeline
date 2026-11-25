@@ -145,3 +145,48 @@ func TestUsageByModelRejectsOverflowWithoutPartialTotals(t *testing.T) {
 		t.Fatalf("overall summary must remain complete: %+v %v", summary, err)
 	}
 }
+
+
+func TestUsageByModelPreservesExactLargeTokenTotals(t *testing.T) {
+	db := testDB(t)
+	s := &Store{DB: db}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	start := time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC)
+	tenant := "m12-exact-" + rand.Text()
+	project := "project-a"
+	t.Cleanup(func() {
+		c, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		for _, query := range []string{
+			"DELETE FROM event_outbox WHERE event_id IN (SELECT event_id FROM usage_ledger WHERE tenant_id=$1)",
+			"DELETE FROM usage_ledger WHERE tenant_id=$1",
+		} {
+			if _, err := db.ExecContext(c, query, tenant); err != nil {
+				t.Errorf("fixture cleanup: %v", err)
+			}
+		}
+	})
+	for i := 0; i < 2; i++ {
+		e, err := event.SyntheticUsageEvent(tenant, i, start)
+		if err != nil { t.Fatal(err) }
+		e.TenantID, e.ProjectID, e.Model = tenant, project, "large-token-model"
+		e.PromptTokens, e.CompletionTokens = 9223372036854775807, 1
+		if err := e.Seal(); err != nil { t.Fatal(err) }
+		if out, err := s.Record(ctx, e); err != nil || out != Created {
+			t.Fatalf("record: %s %v", out, err)
+		}
+		if out, err := s.Record(ctx, e); err != nil || out != Duplicate {
+			t.Fatalf("retry: %s %v", out, err)
+		}
+	}
+	models, err := s.UsageByModel(ctx, tenant, project, start, start.Add(time.Hour))
+	if err != nil { t.Fatal(err) }
+	if len(models) != 1 || models[0].Model != "large-token-model" {
+		t.Fatalf("wrong grouping: %+v", models)
+	}
+	want := UsageSummary{RequestCount: 2, PromptTokens: "18446744073709551614", CompletionTokens: "2", TotalTokens: "18446744073709551616"}
+	if models[0].UsageSummary != want { t.Fatalf("model: %+v, want %+v", models[0], want) }
+	summary, err := s.UsageSummary(ctx, tenant, project, start, start.Add(time.Hour))
+	if err != nil || summary != want { t.Fatalf("summary: %+v, %v", summary, err) }
+}
