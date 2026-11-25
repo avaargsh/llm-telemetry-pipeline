@@ -146,3 +146,10 @@ may legitimately choose a sequential scan for a small or non-selective
 window. Measure EXPLAIN (ANALYZE, BUFFERS), index size, write throughput,
 WAL volume and representative query latency before claiming a performance
 improvement or setting a production SLO.
+
+The disposable physical HA Compose profile also loads migration 006 after
+its ledger and replication bootstrap. M7/M9 require the index to be ready
+and valid on the primary, streaming standby and promoted standby. This
+includes index maintenance in the measured write/failover path; older
+measurements without the index are not directly comparable. The scripts
+do not claim index-specific latency improvement.
