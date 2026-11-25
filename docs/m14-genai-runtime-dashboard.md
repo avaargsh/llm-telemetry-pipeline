@@ -1,9 +1,9 @@
 # M14.2 GenAI receiver and durable worker dashboard
 
-Import `deployments/grafana/dashboards/genai-runtime.json` from Grafana
-Dashboards → New → Import and select an authenticated Prometheus data
-source. This is an importable dashboard, not a Grafana deployment or a
-production SLO claim.
+The preferred deployment is the M14.4 file-provisioned Grafana profile
+(`docs/m14-grafana-provisioning.md`). The dashboard JSON uses the stable
+Prometheus datasource UID `prometheus`; a manual import requires a datasource
+with that UID. This is a dashboard definition, not a production SLO claim.
 
 ## Scrape prerequisites
 
