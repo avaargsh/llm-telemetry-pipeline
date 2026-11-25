@@ -68,7 +68,7 @@ untrusted networks without deployment security and load validation.
 
 ```sh
 go test ./internal/ingestapi -run TestUsageQuery
-go test ./internal/ledger -run TestUsageSummary
+go test ./internal/ledger -run 'Test(UsageSummary|UsageByModel|UsageSeries|UsageQuery|ScopedUsageReader)'
 go build ./cmd/usage-query-api
 ```
 
@@ -191,3 +191,34 @@ Migration 007 and administrator provisioning are required before starting
 the updated service. Direct writer-store aggregation methods remain for
 internal tests, but the HTTP runtime uses the scoped reader exclusively.
 The readiness checks do not replace an audit of database-wide privileges.
+
+### Rollout and rollback checklist
+
+1. Apply migrations 006 and 007 through the administrator-controlled
+   migration process. Confirm the index is valid and ready before rollout.
+2. Provision a new dedicated LOGIN identity using the deployment's secret
+   manager; grant membership in llm_telemetry_usage_query_reader and no
+   writer permissions. As administrator, create its exact login/tenant/project
+   binding. Use parameterized provisioning, not string interpolation of
+   tenant or project identifiers. Never store login passwords in Git.
+3. Confirm the identity cannot read the underlying ledger or outbox
+   directly, change bindings, or write via the views. Confirm its binding
+   is exactly the intended project. Use verified PostgreSQL TLS for remote
+   database connections.
+4. Deploy the updated query API with matching tenant/project values and a
+   separate API token. Check all three endpoints against a known ledger
+   fixture; do not treat a 503 or missing response as zero usage.
+5. Revoke a disposable binding in a test environment and confirm all three
+   endpoints return 503, including when the existing pool is reused.
+   Transactions already started may finish using their previous snapshot.
+6. For rollback, stop the query API first. Do not restore broad ledger
+   SELECT grants to the restricted login to make an older binary work.
+   Retain the additive schema unless a separately reviewed migration
+   removes it; the writer and outbox do not depend on these views.
+
+The real-login integration test provisions a temporary role and binding in
+a disposable database and exercises the production reader, including
+revocation and reassignment on a reused pool. The HTTP contract regression
+tests independently require a redacted 503 and no-store response for all
+three endpoints. These tests must pass before claiming the deployment
+boundary is verified.
