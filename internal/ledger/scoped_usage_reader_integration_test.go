@@ -76,12 +76,33 @@ func TestScopedUsageReaderRealLoginAndRevocation(t *testing.T) {
 	if err != nil || len(models) != 1 || models[0].UsageSummary != want || models[0].Model != "model" { t.Fatalf("models: %+v %v",models,err) }
 	series,err := reader.UsageSeries(ctx,tenant,project,start,end,"hour")
 	if err != nil || len(series) != 1 || series[0].UsageSummary != want { t.Fatalf("series: %+v %v",series,err) }
+	// The event at the rate boundary belongs only to the second window.
+	e,err := event.SyntheticUsageEvent(tenant,3,start)
+	if err != nil { t.Fatal(err) }
+	e.TenantID,e.ProjectID,e.Timestamp = tenant,project,end
+	e.Model,e.PromptTokens,e.CompletionTokens = "model",20,5
+	if err := e.Seal(); err != nil { t.Fatal(err) }
+	if result,err := writer.Record(ctx,e);err != nil || result != Created { t.Fatalf("boundary record: %v %v",result,err) }
+	windows := []ModelQueryWindow{{From:start,To:end},{From:end,To:end.Add(time.Hour)},{From:end.Add(time.Hour),To:end.Add(2*time.Hour)}}
+	captures,err := reader.UsageByModelWindows(ctx,tenant,project,windows)
+	if err != nil || len(captures)!=3 { t.Fatalf("captures: %+v %v",captures,err) }
+	if len(captures[0].Models)!=1 || captures[0].Models[0].UsageSummary!=want ||
+		len(captures[1].Models)!=1 || captures[1].Models[0].PromptTokens!="20" ||
+		captures[2].Models==nil || len(captures[2].Models)!=0 {
+		t.Fatalf("wrong window usage: %+v",captures)
+	}
+	for i,w := range windows {
+		if !captures[i].From.Equal(w.From) || !captures[i].To.Equal(w.To) { t.Fatalf("wrong capture bounds: %+v",captures) }
+	}
+	if got,err := reader.UsageByModelWindows(ctx,tenant,"other",windows);!errors.Is(err,ErrUsageQueryScope)||got!=nil { t.Fatalf("wrong scope: %+v %v",got,err) }
+	if got,err := reader.UsageByModelWindows(ctx,tenant,project,[]ModelQueryWindow{{From:start,To:end},{From:end.Add(time.Second),To:end.Add(time.Hour)}});!errors.Is(err,ErrUsageQueryWindows)||got!=nil { t.Fatalf("gap: %+v %v",got,err) }
 	if _,err := reader.UsageSummary(ctx,tenant,"other",start,end);!errors.Is(err,ErrUsageQueryScope) { t.Fatalf("wrong requested scope: %v",err) }
 	if _,err := admin.ExecContext(ctx,"DELETE FROM public.usage_query_scope_bindings WHERE login_role=$1",role);err != nil { t.Fatal(err) }
 	// Reuse the same reader and its pool: revocation is enforced on each
 	// new transaction, not only at initialization.
 	if _,err := reader.UsageSummary(ctx,tenant,project,start,end);!errors.Is(err,ErrUsageQueryScope) { t.Fatalf("revoked summary: %v",err) }
 	if _,err := reader.UsageByModel(ctx,tenant,project,start,end);!errors.Is(err,ErrUsageQueryScope) { t.Fatalf("revoked models: %v",err) }
+	if got,err := reader.UsageByModelWindows(ctx,tenant,project,windows);!errors.Is(err,ErrUsageQueryScope)||got!=nil { t.Fatalf("revoked windows: %+v %v",got,err) }
 	if _,err := reader.UsageSeries(ctx,tenant,project,start,end,"hour");!errors.Is(err,ErrUsageQueryScope) { t.Fatalf("revoked series: %v",err) }
 	if _,err := admin.ExecContext(ctx,"INSERT INTO public.usage_query_scope_bindings(login_role,tenant_id,project_id) VALUES ($1,$2,'other')",role,tenant);err != nil { t.Fatal(err) }
 	if _,err := reader.UsageSummary(ctx,tenant,project,start,end);!errors.Is(err,ErrUsageQueryScope) { t.Fatalf("reassigned scope: %v",err) }
