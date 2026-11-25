@@ -39,6 +39,11 @@ VALUES (gen_random_uuid(),$1,$2,$3,'usage.finalized',1,'model',10,3,repeat('a',6
 			scope.tenant,scope.project,suffix+string(rune('a'+i)))
 	}
 	if err := verifyQueryScope(ctx, tx, tenant, "p"); err == nil { t.Fatal("privileged login accepted") }
+	var start time.Time
+	if err := tx.QueryRowContext(ctx, "SELECT date_trunc('day', now(), 'UTC')").Scan(&start); err != nil { t.Fatal(err) }
+	start = start.UTC()
+	end := start.Add(24*time.Hour)
+	want := UsageSummary{RequestCount:1, PromptTokens:"10", CompletionTokens:"3", TotalTokens:"13"}
 	for _, tc := range []struct{role string; count int}{{bound,1},{unbound,0}} {
 		exec("SET LOCAL SESSION AUTHORIZATION "+tc.role)
 		var count int
@@ -62,9 +67,26 @@ VALUES (gen_random_uuid(),$1,$2,$3,'usage.finalized',1,'model',10,3,repeat('a',6
 			if err := verifyQueryScope(ctx, tx, tenant, "p"); err != nil { t.Fatal(err) }
 			if err := verifyQueryScope(ctx, tx, tenant, "other"); err == nil { t.Fatal("mismatched project accepted") }
 			if err := verifyQueryScope(ctx, tx, tenant+"-other", "p"); err == nil { t.Fatal("mismatched tenant accepted") }
+			summary, err := queryUsageSummary(ctx,tx,scopedUsageRelation,tenant,"p",start,end)
+			if err != nil || summary != want { t.Fatalf("scoped summary: %+v %v",summary,err) }
+			models, err := queryUsageByModel(ctx,tx,scopedUsageRelation,tenant,"p",start,end)
+			if err != nil || len(models) != 1 || models[0].Model != "model" || models[0].UsageSummary != want {
+				t.Fatalf("scoped models: %+v %v",models,err)
+			}
+			series, err := queryUsageSeries(ctx,tx,scopedUsageRelation,tenant,"p",start,end,"day")
+			if err != nil || len(series) != 1 || series[0].UsageSummary != want || !series[0].BucketStart.Equal(start) {
+				t.Fatalf("scoped series: %+v %v",series,err)
+			}
+
 		} else if err := verifyQueryScope(ctx, tx, tenant, "p"); err == nil {
 			t.Fatal("unbound login accepted")
 		}
 		exec("RESET SESSION AUTHORIZATION")
 	}
+	// A misprovisioned login with a direct ledger column grant must be
+	// rejected even when its view binding is correct.
+	exec("GRANT SELECT (model) ON public.usage_ledger TO "+bound)
+	exec("SET LOCAL SESSION AUTHORIZATION "+bound)
+	if err := verifyQueryScope(ctx,tx,tenant,"p"); err == nil { t.Fatal("overprivileged login accepted") }
+	exec("RESET SESSION AUTHORIZATION")
 }
