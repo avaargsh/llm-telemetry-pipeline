@@ -36,8 +36,9 @@ Example response:
 Start PostgreSQL and load the existing ledger schema. The existing
 `make ledger-ingest` demo can populate deterministic finalized events
 without waiting for Kafka delivery. Use a dedicated database login with
-only CONNECT, schema USAGE and SELECT on public.usage_ledger; do not use
-the writer or a superuser in deployment. Provision credentials through
+only CONNECT and membership in llm_telemetry_usage_query_reader, with a
+matching administrator-managed scope binding. Apply migration 007 first.
+Do not use the writer or a superuser. Provision credentials through
 your own secret management. Do not put credentials in URLs or Git.
 
 Set these environment variables:
@@ -59,9 +60,8 @@ The runtime binds loopback by default and requires a certificate and key
 for non-loopback listeners. The first runtime slice uses one tenant/project
 credential per instance; the handler supports multiple credential
 bindings. Shared deployment,
-pagination, scoped database roles/RLS and scale
-validation are subsequent work. The application scope check is not a
-database row-level security guarantee. Do not expose this prototype to
+pagination, additional deployment controls and scale
+validation are subsequent work. The query runtime uses a scoped database view, not writer-table RLS. Do not expose this prototype to
 untrusted networks without deployment security and load validation.
 
 ## Verification
@@ -154,7 +154,7 @@ includes index maintenance in the measured write/failover path; older
 measurements without the index are not directly comparable. The scripts
 do not claim index-specific latency improvement.
 
-## M12.5a: database login scope foundation (not yet wired to runtime)
+## M12.5: database login scope and runtime integration
 
 Migration `007_usage_query_database_scope.sql` introduces a non-login
 reader group, an administrator-managed mapping from authenticated database
@@ -181,9 +181,13 @@ transactional role and row fixtures, switches session authorization and
 checks scope visibility and effective privileges. It rolls back the
 fixtures. This is not a production deployment or penetration-test result.
 
-The current usage-query-api still uses the original direct ledger query
-path. The next slice must route all three endpoints through the scoped
-view, verify the configured HTTP binding against the database login on
-startup and reject privileged or mismatched connections before serving.
-Do not change the service DSN to the new restricted login until that
-integration is complete.
+The query API now requires the dedicated scoped login. Startup checks the
+HTTP configuration against the database binding and rejects privileged,
+unbound or mismatched sessions. Every request repeats the check in a
+read-only repeatable-read transaction before querying the restricted view.
+A revoked or changed binding fails closed on the next transaction; an
+already-started transaction can finish against its earlier snapshot.
+Migration 007 and administrator provisioning are required before starting
+the updated service. Direct writer-store aggregation methods remain for
+internal tests, but the HTTP runtime uses the scoped reader exclusively.
+The readiness checks do not replace an audit of database-wide privileges.
