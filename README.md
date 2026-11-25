@@ -55,10 +55,14 @@ To run the existing direct-to-Kafka M1 smoke path, use `make publish` in termina
 ## Usage query quickstart (M12)
 
 Run a self-contained demo using Go 1.27.4+, Docker Compose, Bash, curl,
-Python 3, OpenSSL and Make. Local ports 15432 and 18086 must be free.
+Python 3, OpenSSL and Make. It uses local PostgreSQL port 15432 and HTTP
+port 18086 by default.
 
 ```bash
 make usage-query-demo
+
+# If those ports are already occupied, choose two different free loopback ports:
+TELEMETRY_POSTGRES_HOST_PORT=25432 USAGE_QUERY_DEMO_PORT=28086 make usage-query-demo
 ```
 
 The demo builds the actual generator, ledger writer and query API, creates a

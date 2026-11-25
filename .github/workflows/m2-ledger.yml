@@ -83,3 +83,8 @@ jobs:
       - run: go mod verify
       - name: Run documented query quickstart
         run: make usage-query-demo
+      - name: Run quickstart on alternate loopback ports
+        env:
+          TELEMETRY_POSTGRES_HOST_PORT: "25432"
+          USAGE_QUERY_DEMO_PORT: "28086"
+        run: make usage-query-demo
