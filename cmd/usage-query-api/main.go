@@ -42,18 +42,19 @@ func run() error {
 	db.SetMaxOpenConns(8)
 	db.SetMaxIdleConns(4)
 	db.SetConnMaxLifetime(30*time.Minute)
-	h, err := ingestapi.NewUsageQueryHandler(&ledger.Store{DB: db}, []ingestapi.Credential{{
+	credential := ingestapi.Credential{
 		Token: os.Getenv("USAGE_QUERY_TOKEN"),
 		TenantID: os.Getenv("USAGE_QUERY_TENANT_ID"),
 		ProjectID: os.Getenv("USAGE_QUERY_PROJECT_ID"),
-	}})
-	if err != nil { return err }
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	err = db.PingContext(pingCtx)
+	checkCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	reader, err := ledger.NewScopedUsageReader(checkCtx, db, credential.TenantID, credential.ProjectID)
 	cancel()
-	if err != nil { return errors.New("query database readiness failed") }
+	if err != nil { return errors.New("query database scope readiness failed") }
+	h, err := ingestapi.NewUsageQueryHandler(reader, []ingestapi.Credential{credential})
+	if err != nil { return err }
 	server := &http.Server{Addr: *listen, Handler: h, ReadHeaderTimeout: 5*time.Second,
 		ReadTimeout: 10*time.Second, WriteTimeout: 10*time.Second, IdleTimeout: 30*time.Second, MaxHeaderBytes: 8<<10}
 	go func() {
