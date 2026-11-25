@@ -1,0 +1,36 @@
+name: m14-grafana-live-acceptance
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/m14-grafana-live-acceptance.yml"
+      - "deployments/docker-compose.yml"
+      - "deployments/docker-compose-observability.yml"
+      - "deployments/docker-compose-grafana.yml"
+      - "deployments/prometheus/**"
+      - "deployments/grafana/**"
+      - "cmd/lag-exporter/**"
+      - "internal/lagmonitor/**"
+      - "internal/lagrisk/**"
+      - "scripts/fixtures/m4-alert-fixture.go"
+      - "scripts/m14-grafana-live-smoke.sh"
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  kafka-to-grafana-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GRAFANA_ADMIN_USER: telemetry-ci
+      GRAFANA_ADMIN_PASSWORD: ci-only-live-grafana-smoke-password
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact tested HEAD
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - name: Verify live Kafka metrics through provisioned Grafana dashboard
+        run: bash scripts/m14-grafana-live-smoke.sh
