@@ -72,6 +72,27 @@ ClickHouse. Never point it at production data. See
 [M12 usage query contract and deployment](docs/m12-usage-summary.md) for
 manual operation, migrations and credential configuration.
 
+## Grafana dashboards quickstart (M14)
+
+The Kafka operator and GenAI receiver/worker dashboards are provisioned by
+the local Grafana profile. Export a unique password before starting:
+
+```bash
+export GRAFANA_ADMIN_USER=telemetry-admin
+export GRAFANA_ADMIN_PASSWORD="$(openssl rand -hex 32)"
+make grafana-up
+```
+
+Open Grafana at `http://127.0.0.1:13000`. The profile provisions a
+Prometheus datasource with UID `prometheus` and both dashboards into the
+`LLM Telemetry` folder. Verify provisioning and authentication with
+`make grafana-smoke`; stop the isolated profile with `make grafana-down`.
+This is a loopback-only developer profile, not a production HA/SLO deployment.
+See [M14 Grafana provisioning](docs/m14-grafana-provisioning.md) for the
+security boundary and scrape prerequisites. The GenAI worker panels need the
+optional worker overlay; receiver panels need the Kubernetes receiver scrape
+configuration.
+
 ## Current capabilities
 
 - Stable Event IDs, v1 schema, SHA-256 payload sealing and deterministic synthetic generator.
