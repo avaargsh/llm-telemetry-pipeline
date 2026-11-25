@@ -7,7 +7,7 @@ test-race:
 	go test -race ./...
 
 sample:
-	go run ./cmd/event-generator --count 10 --seed sample --start 2026-11-16T11:00:00Z
+	@go run ./cmd/event-generator --count 10 --seed sample --start 2026-11-16T11:00:00Z
 
 infra-up:
 	docker compose -f deployments/docker-compose.yml up -d
