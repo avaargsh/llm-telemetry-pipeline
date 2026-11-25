@@ -43,12 +43,12 @@ def main():
     def check(panel, at, labels, value):
         tests.append({"expr": expr(panel), "eval_time": at,
                       "exp_samples": [] if value is None else [{"labels": labels, "value": value}]})
-    check(1, "0m", '{instance="receiver:4318",job="kubernetes-pods"}', 1)
-    check(1, "2m", '{instance="receiver:4318",job="kubernetes-pods"}', 0)
+    check(1, "0m", '{__name__="up",instance="receiver:4318",job="kubernetes-pods"}', 1)
+    check(1, "2m", '{__name__="up",instance="receiver:4318",job="kubernetes-pods"}', 0)
     check(4, "2m", None, None)
-    check(4, "5m", '{instance="receiver:4318"}', 10)
+    check(4, "5m", '{instance="receiver:4318"}', 5)
     check(5, "5m", '{instance="receiver:4318"}', 0.05)
-    check(6, "2m", '{instance="worker:9109",job="genai-observation-worker"}', 0)
+    check(6, "2m", '{__name__="up",instance="worker:9109",job="genai-observation-worker"}', 0)
     check(7, "0m", '{instance="worker:9109",job="genai-observation-worker"}', 25)
     check(7, "1m", None, None)
     check(7, "2m", None, None)
