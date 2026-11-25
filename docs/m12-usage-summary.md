@@ -58,7 +58,7 @@ curl -fsS -H "Authorization: Bearer $USAGE_QUERY_TOKEN" \
 The runtime binds loopback by default and requires a certificate and key
 for non-loopback listeners. The first runtime slice uses one tenant/project
 credential per instance; the handler supports multiple credential
-bindings. Shared deployment, time-series queries,
+bindings. Shared deployment,
 pagination, scoped database roles/RLS, query indexing and scale
 validation are subsequent work. The application scope check is not a
 database row-level security guarantee. Do not expose this prototype to
@@ -95,3 +95,29 @@ partial totals. Narrow the time window or use the overall summary; model
 pagination is not implemented. The five-second query deadline and all
 scope validation remain unchanged. This bounds returned rows, not database
 scan work; the index and load validation are still outstanding.
+
+## M12.3: UTC hourly and daily series
+
+`GET /v1/usage-summary/series?from=2026-11-21T00:00:00Z&to=2026-11-21T02:00:00Z&granularity=hour`
+
+The existing credential-derived tenant/project scope, five-second deadline,
+exact decimal token strings and half-open window apply. Both endpoints of
+the window must align to whole UTC hours (`hour`) or UTC midnight
+(`day`). The maximum window is 31 days, yielding at most 744 hourly
+or 31 daily buckets. Invalid granularity or unaligned bounds returns 400.
+
+The response contains every bucket in ascending UTC order, even when
+no finalized ledger events exist in that bucket. For example:
+
+```json
+[
+  {"bucket_start":"2026-11-21T00:00:00Z","request_count":1,"prompt_tokens":"10","completion_tokens":"3","total_tokens":"13"},
+  {"bucket_start":"2026-11-21T01:00:00Z","request_count":0,"prompt_tokens":"0","completion_tokens":"0","total_tokens":"0"}
+]
+```
+
+Zero means no matching finalized ledger events in that read snapshot,
+not proof that upstream telemetry is complete. A single SQL read
+supplies the populated buckets; later arrivals can change a subsequent
+query. UTC days are always 24 hours; local calendar days and daylight
+saving boundaries are not supported. This is not a production SLO.

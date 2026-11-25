@@ -13,6 +13,7 @@ import (
 type UsageReader interface {
 	UsageSummary(context.Context, string, string, time.Time, time.Time) (ledger.UsageSummary, error)
 	UsageByModel(context.Context, string, string, time.Time, time.Time) ([]ledger.ModelUsage, error)
+	UsageSeries(context.Context, string, string, time.Time, time.Time, string) ([]ledger.UsageBucket, error)
 }
 
 type usageQueryHandler struct {
@@ -32,7 +33,8 @@ func NewUsageQueryHandler(reader UsageReader, credentials []Credential) (http.Ha
 func (h *usageQueryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if r.URL.Path != "/v1/usage-summary" && r.URL.Path != "/v1/usage-summary/models" {
+	series := r.URL.Path == "/v1/usage-summary/series"
+	if r.URL.Path != "/v1/usage-summary" && r.URL.Path != "/v1/usage-summary/models" && !series {
 		writeError(w, http.StatusNotFound, "not_found")
 		return
 	}
@@ -53,7 +55,9 @@ func (h *usageQueryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil || len(q) != 2 || len(q["from"]) != 1 || len(q["to"]) != 1 {
+	expected := 2
+	if series { expected = 3 }
+	if err != nil || len(q) != expected || len(q["from"]) != 1 || len(q["to"]) != 1 || (series && len(q["granularity"]) != 1) {
 		writeError(w, http.StatusBadRequest, "invalid_usage_window")
 		return
 	}
@@ -63,8 +67,23 @@ func (h *usageQueryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_usage_window")
 		return
 	}
+	granularity := q.Get("granularity")
+	if series && ledger.ValidateUsageSeriesWindow(from, to, granularity) != nil {
+		writeError(w, http.StatusBadRequest, "invalid_usage_window")
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
+	if series {
+		buckets, err := h.reader.UsageSeries(ctx, p.tenantID, p.projectID, from.UTC(), to.UTC(), granularity)
+		if err != nil {
+			w.Header().Set("Retry-After", "1")
+			writeError(w, http.StatusServiceUnavailable, "ledger_query_unavailable")
+			return
+		}
+		writeJSON(w, http.StatusOK, buckets)
+		return
+	}
 	if r.URL.Path == "/v1/usage-summary/models" {
 		models, err := h.reader.UsageByModel(ctx, p.tenantID, p.projectID, from.UTC(), to.UTC())
 		if errors.Is(err, ledger.ErrUsageModelLimit) {

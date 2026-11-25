@@ -116,3 +116,39 @@ func TestUsageQueryModelErrorsAreExplicitAndRedacted(t *testing.T) {
 		}
 	}
 }
+
+func (r *summaryReader) UsageSeries(_ context.Context, tenant, project string, from, to time.Time, granularity string) ([]ledger.UsageBucket, error) {
+	r.tenant, r.project, r.from, r.to = tenant, project, from, to
+	r.calls++
+	if granularity != "hour" { return nil, errors.New("unexpected granularity") }
+	return []ledger.UsageBucket{{BucketStart: from, UsageSummary: ledger.UsageSummary{RequestCount: 1, PromptTokens: "10", CompletionTokens: "3", TotalTokens: "13"}}}, nil
+}
+
+func TestUsageQueryTimeSeries(t *testing.T) {
+	r := &summaryReader{}
+	h, err := NewUsageQueryHandler(r, []Credential{{Token: testToken, TenantID: "tenant-a", ProjectID: "project-a"}})
+	if err != nil { t.Fatal(err) }
+	path := "/v1/usage-summary/series?from=2026-11-21T00:00:00Z&to=2026-11-21T01:00:00Z"
+	for _, tc := range []struct{ path, token string; status int }{
+		{path+"&granularity=hour", "", 401},
+		{path, testToken, 400},
+		{path+"&granularity=minute", testToken, 400},
+		{path+"&granularity=day", testToken, 400},
+		{path+"&granularity=hour&granularity=day", testToken, 400},
+		{path+"&granularity=hour&tenant_id=other", testToken, 400},
+		{path+"&granularity=hour", testToken, 200},
+	} {
+		req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+		if tc.token != "" { req.Header.Set("Authorization", "Bearer "+tc.token) }
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != tc.status { t.Fatalf("status=%d want=%d body=%s", rr.Code, tc.status, rr.Body.String()) }
+		if tc.status == 200 {
+			var got []ledger.UsageBucket
+			if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil || len(got) != 1 || !got[0].BucketStart.Equal(r.from) || got[0].TotalTokens != "13" {
+				t.Fatalf("body=%s err=%v", rr.Body.String(), err)
+			}
+		}
+	}
+	if r.calls != 1 || r.tenant != "tenant-a" || r.project != "project-a" { t.Fatalf("reader=%+v", r) }
+}
