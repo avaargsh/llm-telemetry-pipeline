@@ -3,6 +3,8 @@ package ledger
 import (
 	"context"
 	"crypto/rand"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -64,6 +66,7 @@ func TestUsageSummaryAuthoritativeScopeAndHalfOpenWindow(t *testing.T) {
 		if err != nil { t.Fatal(err) }
 		e.TenantID, e.ProjectID, e.Timestamp = row.tenant, row.project, row.at
 		e.PromptTokens, e.CompletionTokens = 10, 3
+		if i == 0 { e.Model = "model-a" } else { e.Model = "model-b" }
 		if err := e.Seal(); err != nil { t.Fatal(err) }
 		if out, err := s.Record(ctx, e); err != nil || out != Created {
 			t.Fatalf("record: %s %v", out, err)
@@ -82,4 +85,108 @@ func TestUsageSummaryAuthoritativeScopeAndHalfOpenWindow(t *testing.T) {
 	if empty.RequestCount != 0 || empty.PromptTokens != "0" || empty.CompletionTokens != "0" || empty.TotalTokens != "0" {
 		t.Fatalf("wrong empty aggregate: %+v", empty)
 	}
+	models, err := s.UsageByModel(ctx, tenant, project, start, end)
+	if err != nil { t.Fatal(err) }
+	if len(models) != 2 || models[0].Model != "model-a" || models[1].Model != "model-b" {
+		t.Fatalf("wrong model ordering or scope: %+v", models)
+	}
+	for _, row := range models {
+		if row.RequestCount != 1 || row.PromptTokens != "10" || row.CompletionTokens != "3" || row.TotalTokens != "13" {
+			t.Fatalf("wrong model aggregate: %+v", row)
+		}
+	}
+	noModels, err := s.UsageByModel(ctx, tenant, "missing", start, end)
+	if err != nil || noModels == nil || len(noModels) != 0 { t.Fatalf("empty models: %+v %v", noModels, err) }
+
+}
+
+func TestUsageByModelRejectsOverflowWithoutPartialTotals(t *testing.T) {
+	db := testDB(t)
+	s := &Store{DB: db}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	start := time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC)
+	tenant := "m12-model-limit-" + rand.Text()
+	project := "project-a"
+	t.Cleanup(func() {
+		c, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		for _, query := range []string{
+			"DELETE FROM event_outbox WHERE event_id IN (SELECT event_id FROM usage_ledger WHERE tenant_id=$1)",
+			"DELETE FROM usage_ledger WHERE tenant_id=$1",
+		} {
+			if _, err := db.ExecContext(c, query, tenant); err != nil {
+				t.Errorf("fixture cleanup: %v", err)
+			}
+		}
+	})
+	for i := 0; i <= MaxUsageModels; i++ {
+		e, err := event.SyntheticUsageEvent(tenant, i, start)
+		if err != nil { t.Fatal(err) }
+		e.TenantID, e.ProjectID, e.Model = tenant, project, fmt.Sprintf("model-%03d", i)
+		e.Timestamp = start
+		if err := e.Seal(); err != nil { t.Fatal(err) }
+		if out, err := s.Record(ctx, e); err != nil || out != Created {
+			t.Fatalf("record: %s %v", out, err)
+		}
+		if i == MaxUsageModels-1 {
+			rows, err := s.UsageByModel(ctx, tenant, project, start, start.Add(time.Hour))
+			if err != nil || len(rows) != MaxUsageModels {
+				t.Fatalf("at limit: %d rows, %v", len(rows), err)
+			}
+		}
+	}
+	rows, err := s.UsageByModel(ctx, tenant, project, start, start.Add(time.Hour))
+	if !errors.Is(err, ErrUsageModelLimit) || rows != nil {
+		t.Fatalf("overflow must not expose partial totals: %d rows, %v", len(rows), err)
+	}
+	summary, err := s.UsageSummary(ctx, tenant, project, start, start.Add(time.Hour))
+	if err != nil || summary.RequestCount != int64(MaxUsageModels+1) {
+		t.Fatalf("overall summary must remain complete: %+v %v", summary, err)
+	}
+}
+
+
+func TestUsageByModelPreservesExactLargeTokenTotals(t *testing.T) {
+	db := testDB(t)
+	s := &Store{DB: db}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	start := time.Date(2026, 11, 21, 0, 0, 0, 0, time.UTC)
+	tenant := "m12-exact-" + rand.Text()
+	project := "project-a"
+	t.Cleanup(func() {
+		c, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		defer stop()
+		for _, query := range []string{
+			"DELETE FROM event_outbox WHERE event_id IN (SELECT event_id FROM usage_ledger WHERE tenant_id=$1)",
+			"DELETE FROM usage_ledger WHERE tenant_id=$1",
+		} {
+			if _, err := db.ExecContext(c, query, tenant); err != nil {
+				t.Errorf("fixture cleanup: %v", err)
+			}
+		}
+	})
+	for i := 0; i < 2; i++ {
+		e, err := event.SyntheticUsageEvent(tenant, i, start)
+		if err != nil { t.Fatal(err) }
+		e.TenantID, e.ProjectID, e.Model = tenant, project, "large-token-model"
+		e.PromptTokens, e.CompletionTokens = 9223372036854775807, 1
+		if err := e.Seal(); err != nil { t.Fatal(err) }
+		if out, err := s.Record(ctx, e); err != nil || out != Created {
+			t.Fatalf("record: %s %v", out, err)
+		}
+		if out, err := s.Record(ctx, e); err != nil || out != Duplicate {
+			t.Fatalf("retry: %s %v", out, err)
+		}
+	}
+	models, err := s.UsageByModel(ctx, tenant, project, start, start.Add(time.Hour))
+	if err != nil { t.Fatal(err) }
+	if len(models) != 1 || models[0].Model != "large-token-model" {
+		t.Fatalf("wrong grouping: %+v", models)
+	}
+	want := UsageSummary{RequestCount: 2, PromptTokens: "18446744073709551614", CompletionTokens: "2", TotalTokens: "18446744073709551616"}
+	if models[0].UsageSummary != want { t.Fatalf("model: %+v, want %+v", models[0], want) }
+	summary, err := s.UsageSummary(ctx, tenant, project, start, start.Add(time.Hour))
+	if err != nil || summary != want { t.Fatalf("summary: %+v, %v", summary, err) }
 }

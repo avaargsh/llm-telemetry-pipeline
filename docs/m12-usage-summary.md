@@ -58,7 +58,7 @@ curl -fsS -H "Authorization: Bearer $USAGE_QUERY_TOKEN" \
 The runtime binds loopback by default and requires a certificate and key
 for non-loopback listeners. The first runtime slice uses one tenant/project
 credential per instance; the handler supports multiple credential
-bindings. Shared deployment, model breakdown, time-series queries,
+bindings. Shared deployment, time-series queries,
 pagination, scoped database roles/RLS, query indexing and scale
 validation are subsequent work. The application scope check is not a
 database row-level security guarantee. Do not expose this prototype to
@@ -76,3 +76,22 @@ The authoritative ledger test requires TEST_POSTGRES_DSN pointing to a
 disposable PostgreSQL database with the schema applied. It checks two
 tenants, two projects, inclusive lower/exclusive upper window bounds,
 repeated ingestion and empty aggregates.
+
+## M12.2: per-model breakdown
+
+`GET /v1/usage-summary/models?from=2026-11-16T11:00:00Z&to=2026-11-16T12:00:00Z`
+
+Uses the same authenticated tenant/project, time bounds and exact decimal
+token strings as the overall summary. Returns a JSON array ordered by model
+name (PostgreSQL C collation); an empty window returns `[]`.
+
+```json
+[{"model":"Qwen3-32B","request_count":2,"prompt_tokens":"20","completion_tokens":"6","total_tokens":"26"}]
+```
+
+The response supports at most 100 distinct models per window. A larger
+breakdown returns HTTP 422 with error `usage_model_limit_exceeded` and no
+partial totals. Narrow the time window or use the overall summary; model
+pagination is not implemented. The five-second query deadline and all
+scope validation remain unchanged. This bounds returned rows, not database
+scan work; the index and load validation are still outstanding.

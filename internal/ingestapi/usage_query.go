@@ -12,6 +12,7 @@ import (
 
 type UsageReader interface {
 	UsageSummary(context.Context, string, string, time.Time, time.Time) (ledger.UsageSummary, error)
+	UsageByModel(context.Context, string, string, time.Time, time.Time) ([]ledger.ModelUsage, error)
 }
 
 type usageQueryHandler struct {
@@ -31,7 +32,7 @@ func NewUsageQueryHandler(reader UsageReader, credentials []Credential) (http.Ha
 func (h *usageQueryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	if r.URL.Path != "/v1/usage-summary" {
+	if r.URL.Path != "/v1/usage-summary" && r.URL.Path != "/v1/usage-summary/models" {
 		writeError(w, http.StatusNotFound, "not_found")
 		return
 	}
@@ -64,6 +65,20 @@ func (h *usageQueryHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
+	if r.URL.Path == "/v1/usage-summary/models" {
+		models, err := h.reader.UsageByModel(ctx, p.tenantID, p.projectID, from.UTC(), to.UTC())
+		if errors.Is(err, ledger.ErrUsageModelLimit) {
+			writeError(w, http.StatusUnprocessableEntity, "usage_model_limit_exceeded")
+			return
+		}
+		if err != nil {
+			w.Header().Set("Retry-After", "1")
+			writeError(w, http.StatusServiceUnavailable, "ledger_query_unavailable")
+			return
+		}
+		writeJSON(w, http.StatusOK, models)
+		return
+	}
 	result, err := h.reader.UsageSummary(ctx, p.tenantID, p.projectID, from.UTC(), to.UTC())
 	if err != nil {
 		w.Header().Set("Retry-After", "1")
