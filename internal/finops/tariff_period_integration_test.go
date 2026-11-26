@@ -3,7 +3,6 @@ package finops
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"errors"
 	"os"
 	"strings"
