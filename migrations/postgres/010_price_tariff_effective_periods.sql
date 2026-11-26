@@ -85,7 +85,7 @@ EXECUTE FUNCTION public.reject_price_tariff_effective_period_mutation();
 
 CREATE VIEW public.usage_query_price_periods WITH (security_barrier = true) AS
 SELECT p.publication_id, p.tenant_id, p.project_id, p.price_version,
-       p.price_fingerprint, p.effective_from, p.effective_to,
+       p.price_fingerprint, p.effective_from, p.effective_to, p.effective_period,
        p.publication_reason, p.source_reference, p.published_at, p.published_by
 FROM public.price_tariff_effective_periods p
 JOIN public.usage_query_scope_bindings b
