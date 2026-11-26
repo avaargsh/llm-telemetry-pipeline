@@ -7,7 +7,12 @@ import (
 	"time"
 )
 
-var ErrInvalidPricePeriodWindow = errors.New("invalid tariff effective-period query window")
+var (
+	ErrInvalidPricePeriodWindow = errors.New("invalid tariff effective-period query window")
+	ErrTooManyPricePeriods = errors.New("too many tariff effective periods in query window")
+)
+
+const MaxPricePeriodResults = 128
 
 type PriceEffectivePeriodRecord struct {
 	PublicationID   int64
@@ -46,7 +51,8 @@ SELECT publication_id, price_version, price_fingerprint,
 FROM public.usage_query_price_periods
 WHERE tenant_id=$1 AND project_id=$2
   AND effective_period && tstzrange($3, $4, '[)')
-ORDER BY effective_from, publication_id`,
+ORDER BY effective_from, publication_id
+LIMIT 129`,
 			tenant, project, from.UTC(), to.UTC())
 		if err != nil {
 			return nil, err
@@ -66,6 +72,9 @@ ORDER BY effective_from, publication_id`,
 		}
 		if err := rows.Err(); err != nil {
 			return nil, err
+		}
+		if len(result) > MaxPricePeriodResults {
+			return nil, ErrTooManyPricePeriods
 		}
 		return result, nil
 	})
