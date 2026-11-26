@@ -140,3 +140,28 @@ All cost input JSON files, including price-binding manifests, reject unpaired
 UTF-16 surrogate escapes before decoding. Valid surrogate pairs, explicit
 U+FFFD and escaped backslashes remain supported. This prevents silent
 replacement from aliasing malformed model or version identities.
+
+### Database registry verification (M13.8d)
+
+After applying migration 008 and registering the canonical fingerprint of
+every supplied schedule version using the trusted administrator, run:
+
+```sh
+go run ./cmd/usage-cost-estimate --schedule schedule.json \
+  --from 2026-11-21T00:00:00Z --to 2026-11-21T02:00:00Z \
+  --verify-price-registry
+```
+
+The option is historical-only. All supplied periods, even those outside
+the requested window, must match their registered content fingerprints.
+The scoped reader checks bindings and reads ledger usage in the same
+read-only repeatable-read transaction. Missing/mismatched versions or
+unavailable scope cause a nonzero exit without an estimate; no fallback
+to unverified mode is permitted. A successful verified report adds
+`price_registry_verified: true`. The optional file manifest can also be
+supplied; both checks must pass. Existing offline and unverified historical
+modes retain their behavior and output shape.
+
+This verifies price content bindings, not effective dates, provider
+authenticity, usage completeness, or invoice accuracy. The caller still
+supplies the schedule. See [registry setup](m13-price-version-registry.md).

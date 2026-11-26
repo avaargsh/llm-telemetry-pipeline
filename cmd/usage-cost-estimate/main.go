@@ -32,11 +32,12 @@ func run(args []string, out io.Writer) error {
 	usagePath := flags.String("usage","","JSON model usage breakdown")
 	pricePath := flags.String("prices","","JSON price snapshot")
 	bindingsPath := flags.String("price-bindings","","JSON expected version-to-fingerprint bindings")
+	verifyRegistry := flags.Bool("verify-price-registry",false,"verify historical price bindings against the scoped registry")
 	schedule := flags.String("schedule","","JSON historical price period array")
 	from := flags.String("from","","historical window start RFC3339")
 	to := flags.String("to","","historical window end RFC3339")
 	if err := flags.Parse(args); err != nil || flags.NArg() != 0 {
-		return errors.New("usage: usage-cost-estimate --usage usage.json --prices prices.json [--price-bindings bindings.json] OR --schedule schedule.json --from RFC3339 --to RFC3339 [--price-bindings bindings.json]")
+		return errors.New("usage: usage-cost-estimate --usage usage.json --prices prices.json [--price-bindings bindings.json] OR --schedule schedule.json --from RFC3339 --to RFC3339 [--price-bindings bindings.json] [--verify-price-registry]")
 	}
 	var bindings priceBindings
 	var bindingErr error
@@ -49,8 +50,9 @@ func run(args []string, out io.Writer) error {
 	if *schedule!="" || *from!="" || *to!="" {
 		if *usagePath!="" || *pricePath!="" { return errors.New("choose either offline or historical mode") }
 		if *schedule=="" || *from=="" || *to=="" { return errors.New("historical mode requires --schedule, --from and --to") }
-		return runHistorical(*schedule,*from,*to,bindings,out)
+		return runHistorical(*schedule,*from,*to,bindings,*verifyRegistry,out)
 	}
+	if *verifyRegistry { return errors.New("--verify-price-registry requires historical mode") }
 	if *usagePath=="" || *pricePath=="" {
 		return errors.New("usage: usage-cost-estimate --usage usage.json --prices prices.json [--price-bindings bindings.json]")
 	}

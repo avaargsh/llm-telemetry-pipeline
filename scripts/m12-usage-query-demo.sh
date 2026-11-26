@@ -52,7 +52,7 @@ pg() {
 "${compose[@]}" up -d postgres
 for i in $(seq 1 60); do
   if "${compose[@]}" exec -T postgres pg_isready -h 127.0.0.1 -U telemetry -d telemetry >/dev/null 2>&1 &&
-    [[ "$(pg -tAc "SELECT to_regclass('public.usage_query_scope') IS NOT NULL" 2>/dev/null)" == t ]]; then
+    [[ "$(pg -tAc "SELECT to_regclass('public.usage_query_scope') IS NOT NULL AND to_regclass('public.price_version_registry') IS NOT NULL" 2>/dev/null)" == t ]]; then
     break
   fi
   if (( i == 60 )); then echo 'PostgreSQL migration readiness timeout' >&2; exit 1; fi
@@ -134,7 +134,7 @@ JSON
 historical_cost() {
   USAGE_QUERY_DATABASE_URL="postgres://m12_demo_reader:$password@127.0.0.1:$TELEMETRY_POSTGRES_HOST_PORT/telemetry?sslmode=disable" \
     USAGE_QUERY_TENANT_ID=tenant_001 USAGE_QUERY_PROJECT_ID=project_001 \
-    "$tmp/cost" --schedule "$tmp/schedule.json" --from 2026-11-21T00:00:00Z --to 2026-11-21T02:00:00Z
+    "$tmp/cost" --schedule "$tmp/schedule.json" --from 2026-11-21T00:00:00Z --to 2026-11-21T02:00:00Z "$@"
 }
 historical_cost > "$tmp/history.json"
 python3 - "$tmp/history.json" <<'PY'
@@ -151,12 +151,63 @@ assert [w["estimate"]["total_cost"] for w in report["windows"]] == ["0.000750000
 assert report["windows"][0]["to"] == report["windows"][1]["from"]
 print(json.dumps(report, indent=2))
 PY
+# Register only synthetic test fixtures in this disposable database.
+# The unverified report supplies content digests, not trusted production rates.
+python3 - "$tmp/history.json" > "$tmp/register.sql" <<'PY'
+import json, re, sys
+with open(sys.argv[1]) as f:
+    report = json.load(f)
+assert "price_registry_verified" not in report
+for window in report["windows"]:
+    estimate = window["estimate"]
+    version, fp = estimate["price_version"], estimate["price_fingerprint"]
+    assert version in ("demo-v1", "demo-v2")
+    assert re.fullmatch(r"sha256:[0-9a-f]{64}", fp)
+    print("INSERT INTO public.price_version_registry(tenant_id,project_id,price_version,price_fingerprint) VALUES ('tenant_001','project_001','%s','%s');" % (version, fp))
+PY
+# Missing versions must fail before any estimate is emitted.
+if historical_cost --verify-price-registry > "$tmp/missing.json" 2>"$tmp/missing.err"; then
+  echo 'unregistered historical cost unexpectedly succeeded' >&2
+  exit 1
+fi
+[[ ! -s "$tmp/missing.json" ]]
+grep -Fxq 'registered price version not found' "$tmp/missing.err"
+pg < "$tmp/register.sql" >/dev/null
+historical_cost --verify-price-registry > "$tmp/verified.json"
+python3 - "$tmp" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+legacy = json.loads((root / "history.json").read_text())
+verified = json.loads((root / "verified.json").read_text())
+assert verified.pop("price_registry_verified") is True
+assert verified == legacy
+# Change price content without changing the registered version.
+schedule = json.loads((root / "schedule.json").read_text())
+schedule[0]["table"]["rates"][0]["input_per_million"] = "3"
+(root / "tampered-schedule.json").write_text(json.dumps(schedule))
+PY
+# Use the same verified option with a different schedule, without mutating the registry.
+cp "$tmp/schedule.json" "$tmp/original-schedule.json"
+cp "$tmp/tampered-schedule.json" "$tmp/schedule.json"
+if historical_cost --verify-price-registry > "$tmp/mismatch.json" 2>"$tmp/mismatch.err"; then
+  echo 'mismatched historical cost unexpectedly succeeded' >&2
+  exit 1
+fi
+[[ ! -s "$tmp/mismatch.json" ]]
+grep -Fxq 'registered price version fingerprint mismatch' "$tmp/mismatch.err"
+mv "$tmp/original-schedule.json" "$tmp/schedule.json"
+echo 'PASS: real verified cost CLI, missing version, fingerprint mismatch, legacy parity'
 pg -c "DELETE FROM public.usage_query_scope_bindings WHERE login_role='m12_demo_reader'" >/dev/null
 if historical_cost > "$tmp/revoked-cost.json" 2>"$tmp/revoked-cost.err"; then
   echo 'revoked historical cost query unexpectedly succeeded' >&2
   exit 1
 fi
 [[ ! -s "$tmp/revoked-cost.json" ]]
+if historical_cost --verify-price-registry > "$tmp/revoked-verified.json" 2>"$tmp/revoked-verified.err"; then
+  echo 'revoked verified cost query unexpectedly succeeded' >&2
+  exit 1
+fi
+[[ ! -s "$tmp/revoked-verified.json" ]]
 echo 'PASS: historical scoped cost CLI, exact price transition and revoked binding'
 for url in "$base?$window" "$base/models?$window" "$base/series?$window&granularity=hour"; do
   request "$url" 503 "$tmp/error.json"
