@@ -129,9 +129,10 @@ published, err := finops.PublishTariffPeriod(ctx, ownerDB, finops.PricePeriodPub
 ```
 
 Scoped reads use `ledger.ScopedUsageReader.PriceEffectivePeriods` and return
-only periods intersecting a bounded query interval. The exclusion constraint
-is the concurrency authority; an overlap is returned as
-`finops.ErrPricePeriodOverlap`. The publication API rejects zero, non-finite,
+only periods intersecting a bounded query interval. The per-scope row lock
+and READ COMMITTED overlap trigger are the concurrency authority; an overlap
+is returned as `finops.ErrPricePeriodOverlap`. The database rejects writes
+at other isolation levels. The publication API rejects zero, non-finite,
 sub-microsecond, reversed bounds and blank reasons before writing.
 
 The PostgreSQL integration test covers adjacent intervals, overlap rejection,
