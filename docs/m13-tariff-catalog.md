@@ -100,11 +100,13 @@ rows that bind a tenant/project/version to a finite UTC half-open interval
 change reason, optional source reference, database publication timestamp,
 and `session_user` publisher identity.
 
-A generated `tstzrange` and GiST exclusion constraint prevent overlapping
-periods for the same tenant/project, including concurrent writers. Adjacent
-periods are valid; gaps are deliberately representable and must be rejected
-by a report that requires complete coverage. `btree_gist` is a migration
-prerequisite for text equality in the exclusion constraint.
+A private per-tenant/project lock row and a BEFORE INSERT trigger
+serialize overlap checks. The trigger locks the scope row until transaction
+end, then checks for an intersecting interval under READ COMMITTED; concurrent
+writers cannot both publish overlapping periods. Adjacent periods are valid;
+gaps are deliberately representable and must be rejected by a report that
+requires complete coverage. This uses core PostgreSQL features and has no
+extension prerequisite.
 
 The insert trigger verifies that the referenced immutable payload exists
 and that its fingerprint matches. No FK is used, preserving the payload
