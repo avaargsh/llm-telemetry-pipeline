@@ -29,6 +29,12 @@ func (s *ScopedUsageReader) PriceEffectivePeriods(ctx context.Context, tenant, p
 		return nil, ErrInvalidPricePeriodWindow
 	}
 	return scopedRead(ctx, s, tenant, project, func(tx *sql.Tx) ([]PriceEffectivePeriodRecord, error) {
+		if err := verifyPriceRegistryPrivileges(ctx, tx); err != nil {
+			return nil, err
+		}
+		if err := verifyPriceTariffPayloadPrivileges(ctx, tx); err != nil {
+			return nil, err
+		}
 		if err := verifyPriceEffectivePeriodPrivileges(ctx, tx); err != nil {
 			return nil, err
 		}
