@@ -105,6 +105,9 @@ func LoadRegisteredTariff(ctx context.Context, reader TariffPayloadReader, tenan
 	if err != nil {
 		return TariffPayload{}, err
 	}
+	if record.SchemaVersion != 1 {
+		return TariffPayload{}, ErrInvalidEstimate
+	}
 	var rates []ModelRate
 	if err := json.Unmarshal(record.RatesJSON, &rates); err != nil || rates == nil {
 		return TariffPayload{}, ErrInvalidEstimate
