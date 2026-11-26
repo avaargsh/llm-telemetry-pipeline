@@ -73,10 +73,15 @@ func run(args []string, out io.Writer) error {
 }
 
 func readJSON(path string, target any) error {
+	// Inspect the path before opening it: opening a FIFO can wait for a writer.
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return errors.New("expected regular input file")
+	}
 	f,err := os.Open(path)
 	if err != nil { return err }
 	defer f.Close()
-	info,err := f.Stat()
+	info,err = f.Stat()
 	if err != nil || !info.Mode().IsRegular() { return errors.New("expected regular input file") }
 	data,err := io.ReadAll(io.LimitReader(f,maxInputBytes+1))
 	if err != nil || len(data) > maxInputBytes { return errors.New("input unreadable or too large") }
