@@ -84,6 +84,15 @@ func TestTariffCatalogRealLogin(t *testing.T) {
 		tenant, project, table.Version, expected.Fingerprint)
 
 	otherFingerprint := "sha256:" + strings.Repeat("b", 64)
+	if _, err := admin.ExecContext(ctx, `
+INSERT INTO public.price_tariff_payloads
+    (tenant_id,project_id,price_version,price_fingerprint,payload_schema_version,currency,rates)
+VALUES ($1,$2,'missing-binding',$3,1,'USD',$4::jsonb)`,
+		tenant, project, expected.Fingerprint,
+		`[{"model":"model-b","input_per_million":"0.500000","output_per_million":"0.000000"}]`); err == nil ||
+		!strings.Contains(err.Error(), "price version registry binding missing") {
+		t.Fatalf("database did not require registry binding: %v", err)
+	}
 	exec("INSERT INTO public.price_version_registry(tenant_id,project_id,price_version,price_fingerprint) VALUES ($1,$2,$3,$4)",
 		tenant, project, "bad-binding", expected.Fingerprint)
 	if _, err := admin.ExecContext(ctx, `
