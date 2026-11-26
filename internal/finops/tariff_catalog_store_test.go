@@ -93,3 +93,28 @@ func TestLoadRegisteredTariffRejectsNilReader(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestLoadRegisteredTariffRejectsUnsupportedSchema(t *testing.T) {
+	table := PriceTable{
+		Version: "v1",
+		Currency: "USD",
+		Rates: []ModelRate{{Model: "a", InputPerMillion: "1", OutputPerMillion: "2"}},
+	}
+	payload, err := CanonicalTariffPayload(table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rates, err := json.Marshal(payload.Table.Rates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := tariffPayloadReaderFunc(func(context.Context, string, string, string) (ledger.PriceTariffPayloadRecord, error) {
+		return ledger.PriceTariffPayloadRecord{
+			Version: "v1", Fingerprint: payload.Fingerprint,
+			SchemaVersion: 2, Currency: "USD", RatesJSON: rates,
+		}, nil
+	})
+	if got, err := LoadRegisteredTariff(context.Background(), reader, "tenant", "project", "v1"); !errors.Is(err, ErrInvalidEstimate) || got.Fingerprint != "" {
+		t.Fatalf("unsupported schema returned %+v, %v", got, err)
+	}
+}
