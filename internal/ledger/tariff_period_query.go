@@ -45,7 +45,7 @@ SELECT publication_id, price_version, price_fingerprint,
        published_at, published_by
 FROM public.usage_query_price_periods
 WHERE tenant_id=$1 AND project_id=$2
-  AND effective_from < $4 AND effective_to > $3
+  AND effective_period && tstzrange($3, $4, '[)')
 ORDER BY effective_from, publication_id`,
 			tenant, project, from.UTC(), to.UTC())
 		if err != nil {
