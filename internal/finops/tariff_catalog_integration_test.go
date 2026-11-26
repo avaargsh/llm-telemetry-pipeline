@@ -117,6 +117,16 @@ VALUES ($1,$2,'bad-order',$3,1,'USD',$4::jsonb)`,
 		t.Fatalf("database did not enforce canonical model ordering: %v", err)
 	}
 	exec("INSERT INTO public.price_version_registry(tenant_id,project_id,price_version,price_fingerprint) VALUES ($1,$2,$3,$4)",
+		tenant, project, "bad-shape", expected.Fingerprint)
+	if _, err := admin.ExecContext(ctx, `
+INSERT INTO public.price_tariff_payloads
+    (tenant_id,project_id,price_version,price_fingerprint,payload_schema_version,currency,rates)
+VALUES ($1,$2,'bad-shape',$3,1,'USD',$4::jsonb)`,
+		tenant, project, expected.Fingerprint, `[1]`); err == nil ||
+		!strings.Contains(err.Error(), "invalid price tariff rate object") {
+		t.Fatalf("database did not reject non-object rate entries: %v", err)
+	}
+	exec("INSERT INTO public.price_version_registry(tenant_id,project_id,price_version,price_fingerprint) VALUES ($1,$2,$3,$4)",
 		tenant, project, "bad-rate", expected.Fingerprint)
 	if _, err := admin.ExecContext(ctx, `
 INSERT INTO public.price_tariff_payloads
