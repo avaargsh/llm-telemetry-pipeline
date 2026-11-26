@@ -60,6 +60,11 @@ AS $$
 DECLARE
     registered_fingerprint text;
 BEGIN
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION 'tariff effective-period publication requires READ COMMITTED'
+            USING ERRCODE = '25001';
+    END IF;
+
     SELECT price_fingerprint
       INTO registered_fingerprint
       FROM public.price_tariff_payloads
