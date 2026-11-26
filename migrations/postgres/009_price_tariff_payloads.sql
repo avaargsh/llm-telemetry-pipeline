@@ -17,10 +17,7 @@ CREATE TABLE public.price_tariff_payloads (
                     THEN jsonb_array_length(rates) <= 1000
                     ELSE false END),
     created_at timestamptz NOT NULL DEFAULT statement_timestamp(),
-    PRIMARY KEY (tenant_id, project_id, price_version),
-    FOREIGN KEY (tenant_id, project_id, price_version)
-        REFERENCES public.price_version_registry
-            (tenant_id, project_id, price_version)
+    PRIMARY KEY (tenant_id, project_id, price_version)
 );
 
 -- The Go writer recomputes SHA-256. PostgreSQL enforces that the payload
