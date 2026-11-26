@@ -29,10 +29,10 @@ An explicit empty rates array is distinct from missing/null input.
 - Do not migrate existing fingerprint-only rows by inventing missing rates
   or effective periods. Treat missing evidence as unavailable.
 
-The next slice must establish database schema and integration tests for
-identity, immutability, concurrency, cross-scope isolation and rollback
-before the reporting API can use this catalog. No production billing,
-invoice, or price provenance claim is made.
+M13.9b below establishes immutable payload storage and scoped PostgreSQL
+integration coverage. Effective periods, publication approvals and provenance
+remain separate work before the reporting API can use the complete catalog.
+No production billing, invoice, or price provenance claim is made.
 
 ## Verification
 
