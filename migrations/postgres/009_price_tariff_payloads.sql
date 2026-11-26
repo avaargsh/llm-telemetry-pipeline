@@ -63,8 +63,11 @@ BEGIN
     END IF;
 
     FOR item IN SELECT value FROM jsonb_array_elements(NEW.rates) LOOP
-        IF jsonb_typeof(item) IS DISTINCT FROM 'object'
-           OR NOT (item ?& ARRAY['model', 'input_per_million', 'output_per_million'])
+        IF jsonb_typeof(item) IS DISTINCT FROM 'object' THEN
+            RAISE EXCEPTION 'invalid price tariff rate object'
+                USING ERRCODE = '23514';
+        END IF;
+        IF NOT (item ?& ARRAY['model', 'input_per_million', 'output_per_million'])
            OR item - ARRAY['model', 'input_per_million', 'output_per_million'] <> '{}'::jsonb
            OR jsonb_typeof(item->'model') IS DISTINCT FROM 'string'
            OR jsonb_typeof(item->'input_per_million') IS DISTINCT FROM 'string'
