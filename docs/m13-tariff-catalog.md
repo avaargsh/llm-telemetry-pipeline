@@ -91,3 +91,58 @@ This catalog stores price content, not its source, effective time, approval,
 signature, or provider authenticity. The effective-period schedule and
 time-overlap constraints are still separate work. It is not an invoice or
 automatic billing authority.
+
+## M13.9c: immutable effective-time publications
+
+Migration `010_price_tariff_effective_periods.sql` adds immutable publication
+rows that bind a tenant/project/version to a finite UTC half-open interval
+`[effective_from, effective_to)`, the exact payload fingerprint, a required
+change reason, optional source reference, database publication timestamp,
+and `session_user` publisher identity.
+
+A private per-tenant/project lock row and a BEFORE INSERT trigger
+serialize overlap checks. The trigger locks the scope row until transaction
+end, then checks for an intersecting interval under READ COMMITTED; concurrent
+writers cannot both publish overlapping periods. Adjacent periods are valid;
+gaps are deliberately representable and must be rejected by a report that
+requires complete coverage. This uses core PostgreSQL features and has no
+extension prerequisite.
+
+The insert trigger verifies that the referenced immutable payload exists
+and that its fingerprint matches. No FK is used, preserving the payload
+table's existing append-only/TRUNCATE guard contract. UPDATE, DELETE and
+TRUNCATE on publications are rejected. Runtime readers receive only the
+security-barrier scope view and are checked for direct base-table privileges.
+
+Trusted provisioning:
+
+```go
+published, err := finops.PublishTariffPeriod(ctx, ownerDB, finops.PricePeriodPublication{
+    TenantID: tenant,
+    ProjectID: project,
+    PriceVersion: version,
+    EffectiveFrom: from,
+    EffectiveTo: to,
+    Reason: "approved rate change",
+    SourceReference: "change-record-123",
+})
+```
+
+Scoped reads use `ledger.ScopedUsageReader.PriceEffectivePeriods` and return
+only periods intersecting a bounded query interval. The per-scope row lock
+and READ COMMITTED overlap trigger are the concurrency authority; an overlap
+is returned as `finops.ErrPricePeriodOverlap`. The database rejects writes
+at other isolation levels. The publication API rejects zero, non-finite,
+sub-microsecond, reversed bounds and blank reasons before writing.
+
+The PostgreSQL integration test covers adjacent intervals, overlap rejection,
+separate-project isolation, concurrent overlapping publications, missing
+payloads, invalid bounds, immutable writes, scope-view isolation, direct
+base-table denial and scope revocation.
+
+The publisher identity is the database `session_user`; if a shared owner
+credential is used, it identifies that credential rather than a human
+approver. This slice does not implement approval workflows, source signatures,
+provider authenticity, schedule-gap completeness, invoices or billing.
+M13.9d must load periods and payloads with usage in one consistent scoped
+snapshot before the verified historical CLI can rely on the catalog.
