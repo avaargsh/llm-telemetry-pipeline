@@ -46,8 +46,8 @@ invalid Unicode/NUL, invalid rates, duplicates and empty versus null rates.
 Migration `009_price_tariff_payloads.sql` adds one immutable row per
 `(tenant_id, project_id, price_version)`. It stores schema version 1,
 currency, the canonical sorted rates array as JSONB, and the matching
-M13.8 registry fingerprint. A foreign key requires the registry binding;
-an insert trigger rechecks the fingerprint and validates exact rate-object
+M13.8 registry fingerprint. An insert trigger requires the registry binding
+and rechecks the fingerprint and validates exact rate-object
 keys, model ordering/uniqueness, and six-place canonical decimal strings.
 UPDATE, DELETE and TRUNCATE are rejected by an append-only trigger.
 
