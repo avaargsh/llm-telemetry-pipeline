@@ -3,6 +3,7 @@ package finops
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"errors"
 	"os"
 	"strings"
@@ -119,8 +120,28 @@ func TestPriceEffectivePeriodsRealLogin(t *testing.T) {
 	}); !errors.Is(err, ErrInvalidPricePeriod) {
 		t.Fatalf("empty reason: %v", err)
 	}
+	var v3Fingerprint string
+	if err := admin.QueryRowContext(ctx,
+		"SELECT price_fingerprint FROM public.price_tariff_payloads WHERE tenant_id=$1 AND project_id=$2 AND price_version='v3'",
+		tenant, project).Scan(&v3Fingerprint); err != nil {
+		t.Fatal(err)
+	}
+	repeatableRead, err := admin.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = repeatableRead.ExecContext(ctx, `
+INSERT INTO public.price_tariff_effective_periods
+    (tenant_id,project_id,price_version,price_fingerprint,effective_from,effective_to,publication_reason)
+VALUES ($1,$2,'v3',$3,$4,$5,'wrong isolation')`,
+		tenant, project, v3Fingerprint, end.Add(time.Hour), end.Add(2*time.Hour))
+	if err == nil || !strings.Contains(err.Error(), "requires READ COMMITTED") {
+		_ = repeatableRead.Rollback()
+		t.Fatalf("database accepted unsafe publication isolation: %v", err)
+	}
+	_ = repeatableRead.Rollback()
 
-	// The exclusion constraint must arbitrate overlapping concurrent writers.
+	// The per-project lock row must survive ordinary mutation attempts.
 	raceStart, raceEnd := end.Add(2*time.Hour), end.Add(3*time.Hour)
 	startGate := make(chan struct{})
 	results := make(chan error, 2)
@@ -189,6 +210,15 @@ func TestPriceEffectivePeriodsRealLogin(t *testing.T) {
 		"truncate": "TRUNCATE public.price_tariff_effective_periods",
 	} {
 		if _, err := admin.ExecContext(ctx, q); err == nil || !strings.Contains(err.Error(), "price tariff effective periods are append-only") {
+			t.Fatalf("%s did not hit append-only trigger: %v", name, err)
+		}
+	}
+	for name, q := range map[string]string{
+		"scope lock update": "UPDATE public.price_tariff_period_scope_locks SET project_id='rewritten'",
+		"scope lock delete": "DELETE FROM public.price_tariff_period_scope_locks",
+		"scope lock truncate": "TRUNCATE public.price_tariff_period_scope_locks",
+	} {
+		if _, err := admin.ExecContext(ctx, q); err == nil || !strings.Contains(err.Error(), "price tariff period scope locks are append-only") {
 			t.Fatalf("%s did not hit append-only trigger: %v", name, err)
 		}
 	}
