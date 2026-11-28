@@ -95,6 +95,16 @@ other-secret=never-print
                 nodes = {f"broker{i}": node(i, f"172.22.0.{i+10}") for i in (1, 2, 3)}
                 self.assertIn("missing or invalid expected Kafka image reference", diagnostics.assess(nodes))
 
+    def test_single_node_compose_uses_same_pinned_kafka_as_ha_baseline(self):
+        root = pathlib.Path(__file__).resolve().parents[1]
+        compose = (root / "deployments/docker-compose.yml").read_text()
+        kafka_images = [
+            line.strip().removeprefix("image: ")
+            for line in compose.splitlines()
+            if line.strip().startswith("image: apache/kafka:")
+        ]
+        self.assertEqual(kafka_images, [diagnostics.KAFKA_IMAGE_REF])
+
     def test_kafka_4_1_2_compose_profile_changes_only_image_reference(self):
         root = pathlib.Path(__file__).resolve().parents[1]
         baseline = (root / "deployments/docker-compose-ha.yml").read_text()
